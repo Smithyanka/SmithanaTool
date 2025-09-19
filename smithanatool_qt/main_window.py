@@ -14,7 +14,7 @@ from smithanatool_qt.tabs.info_tab import InfoTab
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SmithanaTool (Qt)")
+        self.setWindowTitle("SmithanaTool")
         icon_path = Path(__file__).resolve().parent / "assets" / "smithanatool.ico"
         self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1400, 840)

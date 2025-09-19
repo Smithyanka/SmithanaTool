@@ -37,7 +37,7 @@ class InfoTab(QWidget):
         # --- Подзаголовок (ссылка на GitHub) ---
         update_label = QLabel(
             '<div style="text-align:center; font-size:18px;">'
-            '<a href="https://github.com/USERNAME/SmithanaTool">Проверить обновления (github)</a>'
+            '<a href="https://github.com/Smithyanka/SmithanaToolGit/releases">Проверить обновления (github)</a>'
             '</div>'
         )
         update_label.setOpenExternalLinks(True)
