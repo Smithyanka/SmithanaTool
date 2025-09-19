@@ -1,0 +1,5 @@
+PySide6-Essentials>=6.7
+Pillow>=10.0
+requests>=2.31
+playwright
+psd-tools>=1.9
