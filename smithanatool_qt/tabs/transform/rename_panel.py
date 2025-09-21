@@ -2,11 +2,18 @@
 from __future__ import annotations
 from typing import List, Dict, Tuple
 import os, sys, subprocess
+
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QSpinBox, QComboBox,
     QPushButton, QFileDialog, QMessageBox, QProgressDialog
 )
-from PySide6.QtCore import Qt
+
+from PySide6.QtCore import Qt, QTimer
+
+from smithanatool_qt.settings_bind import (
+    group, bind_line_edit, bind_spinbox, bind_attr_string, save_attr_string
+)
 
 def _open_in_explorer(path: str):
     try:
@@ -35,6 +42,8 @@ class RenamePanel(QWidget):
         super().__init__(parent)
         self._gallery = gallery
         self._undo_stack: List[Dict[str, str]] = []  # каждый элемент — отображение current_path -> previous_path
+        self._redo_stack: List[Dict[str, str]] = []  # каждый элемент — отображение previous_path -> current_path
+
 
         v = QVBoxLayout(self)
         v.setAlignment(Qt.AlignTop)
@@ -69,16 +78,20 @@ class RenamePanel(QWidget):
         row_sort.addStretch(1)
         v.addLayout(row_sort)
 
+
         # Кнопки
         row_btns = QHBoxLayout()
         row_btns.addStretch(1)
-        self.btn_rename_selected = QPushButton("Переименовать выделенные")
+        self.btn_rename_selected = QPushButton("Переименовать")
         self.btn_pick_files = QPushButton("Выбрать файлы...")
         self.btn_undo = QPushButton("Вернуть")
+        self.btn_redo = QPushButton("Вернуть обратно")
+        self.btn_redo.setEnabled(False)
         self.btn_undo.setEnabled(False)
         row_btns.addWidget(self.btn_rename_selected)
         row_btns.addWidget(self.btn_pick_files)
         row_btns.addWidget(self.btn_undo)
+        row_btns.addWidget(self.btn_redo)
         v.addLayout(row_btns)
 
         # Подсказка по шаблону
@@ -90,11 +103,136 @@ class RenamePanel(QWidget):
         v.addWidget(lbl)
 
         # Сигналы
+        self.btn_redo.clicked.connect(self._redo_last)
         self.btn_rename_selected.clicked.connect(self._rename_from_gallery)
         self.btn_pick_files.clicked.connect(self._rename_pick_files)
         self.btn_undo.clicked.connect(self._undo_last)
+        QTimer.singleShot(0, self._apply_settings_from_ini)
+
+        # --- persist settings to INI ---
+        self.edit_pattern.editingFinished.connect(
+            lambda: self._save_str_ini("pattern", self.edit_pattern.text().strip())
+        )
+        self.spin_start.valueChanged.connect(
+            lambda v: self._save_int_ini("start", v)
+        )
+        self.spin_zeros.valueChanged.connect(
+            lambda v: self._save_int_ini("zeros", v)
+        )
+        self.cmb_order.currentIndexChanged.connect(
+            lambda v: self._save_int_ini("order", v)
+        )
 
     # ---------- helpers ----------
+
+    def reset_to_defaults(self):
+        # дефолты
+        default_pattern = "{n}"
+        default_start = 1
+        default_zeros = 2
+        default_order_idx = 0  # "Как в галерее"
+
+        # проставляем без лишних сигналов
+        self.edit_pattern.setText(default_pattern)
+        self.spin_start.setValue(default_start)
+        self.spin_zeros.setValue(default_zeros)
+        self.cmb_order.blockSignals(True)
+        self.cmb_order.setCurrentIndex(default_order_idx)
+        self.cmb_order.blockSignals(False)
+
+        # сохраняем в INI
+        self._save_str_ini("pattern", default_pattern)
+        self._save_int_ini("start", default_start)
+        self._save_int_ini("zeros", default_zeros)
+        self._save_int_ini("order", default_order_idx)
+
+
+    def _refresh_gallery_preserving_order(self):
+        gal = self._gallery
+        if not gal:
+            return
+        try:
+            lw = getattr(gal, "list", None)  # ожидается QListWidget/QListView
+            vsb = lw.verticalScrollBar() if lw and hasattr(lw, "verticalScrollBar") else None
+            scroll = vsb.value() if vsb else None
+
+            # запомним выделение по userData (Qt.UserRole)
+            selected_keys = []
+            if lw and hasattr(lw, "item"):
+                for i in range(lw.count()):
+                    it = lw.item(i)
+                    if it.isSelected():
+                        selected_keys.append(it.data(Qt.UserRole))
+
+            # если в галерее есть комбобокс сортировки — запомним индекс
+            cmb_sort = getattr(gal, "cmb_sort", None)
+            sort_idx = cmb_sort.currentIndex() if cmb_sort and hasattr(cmb_sort, "currentIndex") else None
+        except Exception:
+            lw = None;
+            vsb = None;
+            scroll = None;
+            selected_keys = [];
+            sort_idx = None
+
+        # --- собственно обновление галереи ---
+        try:
+            if hasattr(gal, "_apply_sort"):
+                gal._apply_sort(refresh=True)  # как и раньше, но мы вернём состояние
+            elif hasattr(gal, "_refresh_labels"):
+                gal._refresh_labels()
+        except Exception:
+            pass
+
+        # --- восстановление состояния ---
+        try:
+            if sort_idx is not None and cmb_sort:
+                cmb_sort.blockSignals(True)
+                cmb_sort.setCurrentIndex(sort_idx)
+                cmb_sort.blockSignals(False)
+
+            if lw and selected_keys:
+                lw.blockSignals(True)
+                lw.clearSelection()
+                for i in range(lw.count()):
+                    it = lw.item(i)
+                    if it.data(Qt.UserRole) in selected_keys:
+                        it.setSelected(True)
+                lw.blockSignals(False)
+
+            if vsb is not None and scroll is not None:
+                vsb.setValue(scroll)
+        except Exception:
+            pass
+
+    def _apply_settings_from_ini(self):
+        with group("RenamePanel"):
+            bind_line_edit(self.edit_pattern, "pattern", "{n}")
+            bind_spinbox(self.spin_start, "start", 1)
+            bind_spinbox(self.spin_zeros, "zeros", 2)
+            # ← загрузим сохранённый индекс "order" из INI в теневой атрибут
+            bind_attr_string(self, "__order__shadow", "order", "0")
+
+            try:
+                idx = int(getattr(self, "__order__shadow", "0"))
+            except Exception:
+                idx = 0
+
+        # установим выбранный пункт комбобокса
+        self.cmb_order.blockSignals(True)
+        self.cmb_order.setCurrentIndex(idx)
+        self.cmb_order.blockSignals(False)
+    def _save_str_ini(self, key: str, value: str):
+        try:
+            shadow_attr = f"__{key}__shadow"
+            setattr(self, shadow_attr, value)
+            with group("RenamePanel"):
+                save_attr_string(self, shadow_attr, key)
+        except Exception:
+            pass
+
+    def _save_int_ini(self, key: str, value: int):
+        self._save_str_ini(key, str(int(value)))
+
     def _gather_gallery_paths(self) -> List[str]:
         if not self._gallery:
             return []
@@ -116,6 +254,8 @@ class RenamePanel(QWidget):
         start = int(self.spin_start.value())
         pad = int(self.spin_zeros.value())
         order = (self.cmb_order.currentText() or "Как в галерее")
+
+        # Сортировка
         if order == "По имени":
             paths = sorted(paths, key=lambda p: (os.path.dirname(p), os.path.basename(p).lower()))
         elif order == "По дате":
@@ -125,23 +265,39 @@ class RenamePanel(QWidget):
                 pass
 
         plan: List[Tuple[str, str]] = []
+        seen_targets: set[str] = set()  # имена, уже занятые внутри текущего плана
         i = 0
+
         for pth in paths:
             folder = os.path.dirname(pth) or "."
             base = os.path.basename(pth)
             stem, ext = os.path.splitext(base)
+
             nstr = str(start + i).zfill(max(1, pad))
             new_name = pattern.replace("{stem}", stem).replace("{n}", nstr).replace("{ext}", ext or "")
+
+            # Если {ext} не указан в шаблоне и пользователь не дописал расширение вручную — добавим исходное
             if "{ext}" not in pattern:
                 root, given_ext = os.path.splitext(new_name)
                 if not given_ext:
                     new_name = new_name + (ext or "")
+
             dst = os.path.join(folder, new_name)
+
+            # Если исходный и целевой совпадают — пропускаем
             if os.path.abspath(dst) == os.path.abspath(pth):
-                i += 1; continue
-            if os.path.exists(dst):
+                i += 1
+                continue
+
+            # ГАРАНТИЯ уникальности: проверяем и диск, и уже запланированные имена
+            # (второе - это то, чего раньше не хватало)
+            while dst in seen_targets or os.path.exists(dst):
                 dst = _unique_path(dst)
-            plan.append((pth, dst)); i += 1
+
+            seen_targets.add(dst)
+            plan.append((pth, dst))
+            i += 1
+
         return plan, len(paths)
 
     def _update_gallery_paths(self, mapping_update: Dict[str, str]):
@@ -199,13 +355,14 @@ class RenamePanel(QWidget):
         self._update_gallery_paths(mapping_update)
         # Обновим нумерацию/сортировку в галерее
         try:
-            if self._gallery and hasattr(self._gallery, '_apply_sort'):
-                self._gallery._apply_sort(refresh=True)
-            elif self._gallery and hasattr(self._gallery, '_refresh_labels'):
-                self._gallery._refresh_labels()
+            self._refresh_gallery_preserving_order()
         except Exception:
             pass
         out_dir = os.path.dirname(plan[0][1]) if plan else ''
+
+        self._redo_stack.clear()
+        if hasattr(self, "btn_redo"):
+            self.btn_redo.setEnabled(False)
         return renamed, out_dir
 
     def _rename_from_gallery(self):
@@ -214,7 +371,7 @@ class RenamePanel(QWidget):
             QMessageBox.warning(self, "Нет выбора", "Выберите файлы во вкладке «Галерея».", parent=self); return
         plan, total = self._build_plan(paths)
         if not plan:
-            QMessageBox.information(self, "Переименование", "Файлы уже соответствуют шаблону.", parent=self); return
+            QMessageBox.information(self, "Переименование", "Файлы уже соответствуют шаблону."); return
         ok, out_dir = self._apply_renames(plan)
         if ok:
             self._done_box(out_dir, f"Переименовано: {ok}")
@@ -237,10 +394,15 @@ class RenamePanel(QWidget):
     def _undo_last(self):
         if not self._undo_stack:
             return
-        mapping_curr_to_prev = self._undo_stack.pop()  # current -> previous
+
+        # достаём отображение current -> previous
+        mapping_curr_to_prev = self._undo_stack.pop()
         items = list(mapping_curr_to_prev.items())
 
-        # 1) Перенос текущих имён во временные (для избежания конфликтов/циклов)
+        # подготовим "обратное" отображение для Redo: previous -> current
+        redo_map = {prev: curr for (curr, prev) in items}
+
+        # 1) Переносим current во временные файлы (чтобы избежать конфликтов)
         temp_moves: List[Tuple[str, str, str]] = []  # (tmp_path, prev_path, curr_path)
         for curr, prev in items:
             if not os.path.exists(curr):
@@ -258,10 +420,10 @@ class RenamePanel(QWidget):
             except Exception:
                 pass
 
-        # 2) Из временных в исходные (если занято — подобрать уникальное имя)
+        # 2) Переносим временные на место previous
         restored = 0
         mapping_update: Dict[str, str] = {}
-        dlg = QProgressDialog("Возврат предыдущих имён...", None, 0, len(temp_moves), self)
+        dlg = QProgressDialog("Откат выполняется...", None, 0, len(temp_moves), self)
         dlg.setWindowTitle("Переименование")
         dlg.setWindowModality(Qt.ApplicationModal)
         dlg.setCancelButton(None)
@@ -275,9 +437,8 @@ class RenamePanel(QWidget):
             try:
                 os.rename(tmp, dest)
                 restored += 1
-                mapping_update[curr] = dest  # было curr, стало dest
+                mapping_update[curr] = dest
             except Exception:
-                # Не удалось — попробуем вернуть tmp на место curr
                 try:
                     os.rename(tmp, curr)
                 except Exception:
@@ -287,23 +448,26 @@ class RenamePanel(QWidget):
 
         dlg.close()
 
-        # Обновить галерею
+        # обновляем галерею
         self._update_gallery_paths(mapping_update)
-        # Обновим нумерацию/сортировку в галерее после отката
         try:
-            if self._gallery and hasattr(self._gallery, '_apply_sort'):
-                self._gallery._apply_sort(refresh=True)
-            elif self._gallery and hasattr(self._gallery, '_refresh_labels'):
-                self._gallery._refresh_labels()
+            self._refresh_gallery_preserving_order()
         except Exception:
             pass
-        self.btn_undo.setEnabled(bool(self._undo_stack))
 
+        # если удалось восстановить хотя бы что-то
         if restored:
+            # пушим карту для Redo
+            self._redo_stack.append(redo_map)
+            self.btn_redo.setEnabled(True)
+
             out_dir = os.path.dirname(list(mapping_update.values())[0])
-            self._done_box(out_dir, f"Возвращено: {restored}")
+            self._done_box(out_dir, f"Отменено: {restored}")
         else:
-            QMessageBox.information(self, "Переименование", "Нечего возвращать или не удалось откатить изменения.")
+            QMessageBox.information(self, "Переименование", "Нечего отменять или не удалось выполнить откат.")
+
+        # обновляем доступность кнопки Undo
+        self.btn_undo.setEnabled(bool(self._undo_stack))
 
     def _done_box(self, out_dir: str, msg: str):
         box = QMessageBox(self)
@@ -314,3 +478,78 @@ class RenamePanel(QWidget):
         box.exec()
         if box.clickedButton() is btn_open and out_dir:
             _open_in_explorer(out_dir)
+
+    def _redo_last(self):
+        if not self._redo_stack:
+            return
+        mapping_prev_to_curr = self._redo_stack.pop()  # previous -> current
+        items = list(mapping_prev_to_curr.items())
+
+        # 1) Перенос prev во временные, чтобы избежать конфликтов
+        temp_moves: List[Tuple[str, str, str]] = []  # (tmp_path, curr_path, prev_path)
+        for prev, curr in items:
+            if not os.path.exists(prev):
+                continue
+            folder = os.path.dirname(prev) or "."
+            base = os.path.basename(prev)
+            tmp = os.path.join(folder, base + ".redo_tmp")
+            idx = 1
+            while os.path.exists(tmp):
+                tmp = os.path.join(folder, f"{base}.redo_tmp{idx}")
+                idx += 1
+            try:
+                os.rename(prev, tmp)
+                temp_moves.append((tmp, curr, prev))
+            except Exception:
+                pass
+
+        # 2) Из временных в нужные «current» (если занято — подобрать уникальное имя)
+        restored = 0
+        mapping_update: Dict[str, str] = {}
+        dlg = QProgressDialog("Повтор выполняется...", None, 0, len(temp_moves), self)
+        dlg.setWindowTitle("Переименование")
+        dlg.setWindowModality(Qt.ApplicationModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.show()
+
+        for i, (tmp, curr, prev) in enumerate(temp_moves, 1):
+            dest = curr
+            if os.path.exists(dest):
+                dest = _unique_path(dest)
+            try:
+                os.rename(tmp, dest)
+                restored += 1
+                mapping_update[prev] = dest  # было prev, стало dest(≈curr)
+            except Exception:
+                # не удалось — вернём tmp на место prev
+                try:
+                    os.rename(tmp, prev)
+                except Exception:
+                    pass
+            dlg.setValue(i)
+            dlg.repaint()
+
+        dlg.close()
+
+        # Обновить галерею
+        self._update_gallery_paths(mapping_update)
+        try:
+            self._refresh_gallery_preserving_order()
+        except Exception:
+            pass
+
+        # После успешного Redo добавим обратную операцию обратно в Undo-стек
+        if restored:
+            undo_map = {v: k for (k, v) in mapping_update.items()}  # current -> previous
+            self._undo_stack.append(undo_map)
+            self.btn_undo.setEnabled(True)
+
+        # Кнопка "Вернуть обратно" активна, пока есть записи
+        self.btn_redo.setEnabled(bool(self._redo_stack))
+
+        if restored:
+            out_dir = os.path.dirname(list(mapping_update.values())[0])
+            self._done_box(out_dir, f"Повторено: {restored}")
+        else:
+            QMessageBox.information(self, "Переименование", "Нечего повторять или не удалось выполнить повтор.")

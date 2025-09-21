@@ -5,10 +5,11 @@ import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
+
 BASE = Path(os.path.abspath("."))
 ICON_PATH = BASE / "smithanatool_qt" / "assets" / "smithanatool.ico"
 
-ENTRY = "run.py"
+ENTRY = "main.py"
 APPNAME = "SmithanaTool"
 datas = [(r"smithanatool_qt/assets", "assets")]
 hiddenimports = []

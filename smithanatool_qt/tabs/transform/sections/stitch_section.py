@@ -6,8 +6,13 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox, QCheckBox,
     QPushButton, QGroupBox, QFileDialog, QMessageBox, QProgressDialog, QApplication
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from ..stitcher import load_images, merge_vertical, merge_horizontal, save_png
+
+from smithanatool_qt.settings_bind import (
+    group, bind_spinbox, bind_checkbox, bind_line_edit,
+    bind_attr_string, bind_radiobuttons, save_attr_string
+)
 
 def _open_in_explorer(path: str):
     try:
@@ -108,8 +113,94 @@ class StitchSection(QWidget):
         self.btn_auto.clicked.connect(self._do_stitch_auto)
         self.btn_auto_pick.clicked.connect(self._do_stitch_auto_pick)
         self._apply_dim_state()
+        QTimer.singleShot(0, self._apply_settings_from_ini)
+
+        self.cmb_dir.currentIndexChanged.connect(lambda v: self._save_int_ini("mode", v))
+        self.chk_no_resize.toggled.connect(lambda v: self._save_bool_ini("no_resize", v))
+        self.spin_dim.valueChanged.connect(lambda v: self._save_int_ini("dim", v))
+        self.chk_opt.toggled.connect(lambda v: self._save_bool_ini("optimize_png", v))
+        self.spin_compress.valueChanged.connect(lambda v: self._save_int_ini("compress_level", v))
+        self.chk_strip.toggled.connect(lambda v: self._save_bool_ini("strip_metadata", v))
+        self.spin_group.valueChanged.connect(lambda v: self._save_int_ini("per", v))
+        self.spin_zeros.valueChanged.connect(lambda v: self._save_int_ini("zeros", v))
 
     # helpers
+    def reset_to_defaults(self):
+        defaults = dict(
+            mode=0,  # 0=вертикаль
+            no_resize=True,
+            dim=800,
+            optimize_png=True,
+            compress_level=6,
+            strip_metadata=True,
+            per=12,
+            zeros=2,
+        )
+        # UI
+        if hasattr(self, "cmb_dir"):
+            self.cmb_dir.blockSignals(True)
+            self.cmb_dir.setCurrentIndex(defaults["mode"])
+            self.cmb_dir.blockSignals(False)
+        if hasattr(self, "chk_no_resize"):
+            self.chk_no_resize.setChecked(defaults["no_resize"])
+        if hasattr(self, "spin_dim"):
+            self.spin_dim.setValue(defaults["dim"])
+        if hasattr(self, "chk_opt"):
+            self.chk_opt.setChecked(defaults["optimize_png"])
+        if hasattr(self, "spin_compress"):
+            self.spin_compress.setValue(defaults["compress_level"])
+        if hasattr(self, "chk_strip"):
+            self.chk_strip.setChecked(defaults["strip_metadata"])
+        if hasattr(self, "spin_group"):
+            self.spin_group.setValue(defaults["per"])
+        if hasattr(self, "spin_zeros"):
+            self.spin_zeros.setValue(defaults["zeros"])
+
+        # применить внутренние завязки UI
+        if hasattr(self, "_apply_dim_state"):
+            self._apply_dim_state()
+
+        # сохранить в INI
+        self._save_int_ini("mode", defaults["mode"])
+        self._save_bool_ini("no_resize", defaults["no_resize"])
+        self._save_int_ini("dim", defaults["dim"])
+        self._save_bool_ini("optimize_png", defaults["optimize_png"])
+        self._save_int_ini("compress_level", defaults["compress_level"])
+        self._save_bool_ini("strip_metadata", defaults["strip_metadata"])
+        self._save_int_ini("per", defaults["per"])
+        self._save_int_ini("zeros", defaults["zeros"])
+
+    def _apply_settings_from_ini(self):
+        with group("StitchSection"):
+            bind_spinbox(self.spin_dim, "dim", 800)
+            bind_checkbox(self.chk_no_resize, "no_resize", True)
+            bind_checkbox(self.chk_opt, "optimize_png", True)
+            bind_spinbox(self.spin_compress, "compress_level", 6)
+            bind_checkbox(self.chk_strip, "strip_metadata", True)
+            bind_spinbox(self.spin_group, "per", 12)
+            bind_spinbox(self.spin_zeros, "zeros", 2)
+            # Направление: 0 = вертикаль, 1 = горизонталь
+            self.cmb_dir.setCurrentIndex(0)
+            try:
+                self.cmb_dir.setCurrentIndex(int(getattr(self, "__mode_shadow", "0")))
+            except Exception:
+                pass
+
+    def _save_str_ini(self, key: str, value: str):
+        try:
+            shadow_attr = f"__{key}__shadow"
+            setattr(self, shadow_attr, value)
+            with group("StitchSection"):
+                save_attr_string(self, shadow_attr, key)
+        except Exception:
+            pass
+
+    def _save_int_ini(self, key: str, value: int):
+        self._save_str_ini(key, str(int(value)))
+
+    def _save_bool_ini(self, key: str, value: bool):
+        self._save_str_ini(key, "1" if value else "0")
+
     def _update_dim_label(self):
         if self.cmb_dir.currentText() == "По вертикали":
             self.lbl_dim.setText("Ширина:")

@@ -1,12 +1,13 @@
-
+# tabs/novel_worker.py
 from __future__ import annotations
-import re
+import threading
 from dataclasses import dataclass
 from typing import Optional, Iterable, Callable
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from smithanatool_qt.parsers.kakao_novel.runner import run_novel_parser
+
 
 @dataclass
 class NovelParserConfig:
@@ -17,69 +18,102 @@ class NovelParserConfig:
     volume_spec: Optional[str] = None
     min_width: int = 720
 
-class NovelParserWorker(QObject):
+    # Новое: управление покупками/тикетами
+    auto_confirm_purchase: bool = False     # автопокупка без вопросов
+    auto_confirm_use_rental: bool = False   # авто-использование 대여권 (аренды)
+
+
+class NovelParserWorker(QThread):
     log = Signal(str)
     need_login = Signal()
     error = Signal(str)
     finished = Signal()
 
-    def __init__(self, cfg: NovelParserConfig, parent: Optional[QObject]=None):
-        super().__init__(parent)
+    # Сигналы вопросов к UI (как в манхве)
+    # Покупка: цена (int|None) и баланс (int|None)
+    ask_purchase = Signal(object, object)  # price, balance
+    # Использование тикета: доступно аренды, «собственных», баланс, подпись главы
+    ask_use_rental = Signal(int, int, object, str)
+
+    def __init__(self, cfg: NovelParserConfig):
+        super().__init__()
         self.cfg = cfg
-        self._thread: Optional[QThread] = None
-        self._stop = False
 
-    @Slot()
-    def start(self):
-        # запуск в отдельном QThread
-        self._thread = QThread()
-        self.moveToThread(self._thread)
-        self._thread.started.connect(self._run)
-        self._thread.finished.connect(self._thread.deleteLater)
-        self._thread.start()
+        # Синхронизация ответов из UI
+        self._purchase_event = threading.Event()
+        self._purchase_result: bool = False
 
-    @Slot()
-    def stop(self):
-        self._stop = True
+        self._rental_event = threading.Event()
+        self._rental_result: bool = False
 
-    @Slot()
-    def continue_after_login(self):
-        # для совместимости с UI — ничего не делаем, раннер сам подхватит сессию
-        pass
+        self._stop_flag_value = False
 
-    # callbacks
+    # ===== Публичные методы для UI, чтобы вернуть ответ в раннер =====
+    @Slot(bool)
+    def provide_purchase_answer(self, ans: bool):
+        self._purchase_result = bool(ans)
+        self._purchase_event.set()
+
+    @Slot(bool)
+    def provide_use_rental_answer(self, ans: bool):
+        self._rental_result = bool(ans)
+        self._rental_event.set()
+
+    # ===== Внутренние колбэки, которые передадим в run_novel_parser =====
     def _on_log(self, s: str):
-        self.log.emit(s)
+        self.log.emit(str(s))
 
     def _on_need_login(self):
         self.need_login.emit()
 
     def _stop_flag(self) -> bool:
-        return self._stop
+        return self._stop_flag_value
 
-    def _confirm_purchase(self, ch_no: int, vol_no: Optional[int]) -> bool:
-        # Автоматически подтверждаем покупки? По умолчанию — спрашивать в UI не реализуем, оставим False
-        return False
+    def _confirm_purchase(self, price: Optional[int], balance: Optional[int]) -> bool:
+        """
+        Сигнатура для run_novel_parser: (price, balance) -> bool
+        """
+        # Автопокупка включена — сразу подтверждаем
+        if self.cfg.auto_confirm_purchase:
+            self._on_log("[AUTO] Покупка подтверждена по настройке автопокупки.")
+            return True
 
-    def _confirm_use_rental(self, ticket_id: int, ch_no: int, vol_no: Optional[int], title: str) -> bool:
-        return False
+        # Иначе — спрашиваем UI
+        self._purchase_event.clear()
+        self.ask_purchase.emit(price, balance)
+        self._purchase_event.wait()
+        self._on_log("[OK] Пользователь подтвердил покупку." if self._purchase_result else "[SKIP] Пользователь отменил покупку.")
+        return self._purchase_result
 
-    @Slot()
-    def _run(self):
+    def _confirm_use_rental(self, rental_count: int, own_count: int, balance: Optional[int], chapter_label: str) -> bool:
+        """
+        Сигнатура для run_novel_parser: (rental_count, own_count, balance, chapter_label) -> bool
+        """
+        # Автоиспользование тикетов включено — сразу подтверждаем
+        if self.cfg.auto_confirm_use_rental:
+            self._on_log("[AUTO] Использование тикета подтверждено по настройке автоприменения.")
+            return True
+
+        # Иначе — спрашиваем UI
+        self._rental_event.clear()
+        self.ask_use_rental.emit(rental_count, own_count, balance if balance is not None else None, str(chapter_label))
+        self._rental_event.wait()
+        self._on_log("[OK] Использую тикет." if self._rental_result else "[SKIP] Пользователь отказался использовать тикет.")
+        return self._rental_result
+
+    # ===== Поток запуска =====
+    def run(self):
         try:
-            title_id = self.cfg.title_id.strip()
-            spec = (self.cfg.spec_text or '').strip()
-            volume_spec = (self.cfg.volume_spec or None)
-            if self.cfg.mode == 'id':
-                # В режиме ID ожидаем список ViewerID через запятую/пробел/новые строки
-                ids: Iterable[str] = [t.strip() for t in re.split(r'[\s,;]+', spec) if t.strip()]
-                chapters = ids
-                chapter_spec = None
+            # Подготовка спецификации глав
+            chapter_spec: Optional[str] = None
+            chapters: Optional[Iterable[str]] = None
+            if self.cfg.mode == "id":
+                chapters = [s.strip() for s in (self.cfg.spec_text or "").split(",") if s.strip()]
             else:
-                chapters = None
-                chapter_spec = spec  # строки вида "1-5,8,10"
+                chapter_spec = (self.cfg.spec_text or "").strip() or None
+
             run_novel_parser(
-                title_id=title_id,
+                title_id=self.cfg.title_id,
                 chapter_spec=chapter_spec,
                 chapters=chapters,
                 out_dir=self.cfg.out_dir,
@@ -87,12 +121,16 @@ class NovelParserWorker(QObject):
                 on_need_login=self._on_need_login,
                 stop_flag=self._stop_flag,
                 min_width=int(self.cfg.min_width),
-                auto_concat=None,
+                auto_concat=None,  # для новелл не используется
                 on_confirm_purchase=self._confirm_purchase,
                 on_confirm_use_rental=self._confirm_use_rental,
-                volume_spec=volume_spec,
+                volume_spec=self.cfg.volume_spec,
             )
         except Exception as e:
             self.error.emit(str(e))
         finally:
             self.finished.emit()
+
+    # ===== Управление из UI =====
+    def request_stop(self):
+        self._stop_flag_value = True

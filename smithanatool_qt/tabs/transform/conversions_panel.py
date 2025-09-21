@@ -6,10 +6,15 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QSpinBox,
     QCheckBox, QFileDialog, QMessageBox, QProgressDialog, QApplication
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from .converters.png_gif import filter_png as filter_png_for_gif, convert_png_to_gif
 from .converters.png_pdf import filter_png as filter_png_for_pdf, convert_png_to_pdf, merge_pngs_to_pdf
 from .converters.psd_png import filter_psd, convert_psd_to_png
+
+from smithanatool_qt.settings_bind import (
+    group, bind_spinbox, bind_checkbox, save_attr_string
+)
+
 
 def _open_in_explorer(path: str):
     try:
@@ -55,6 +60,77 @@ class ConversionsPanel(QWidget):
         self.btn_gif_convert_sel.clicked.connect(self._gif_convert_selected); self.btn_gif_convert_pick.clicked.connect(self._gif_convert_pick)
         self.btn_pdf_convert_sel.clicked.connect(self._pdf_convert_selected); self.btn_pdf_convert_pick.clicked.connect(self._pdf_convert_pick)
         self.btn_psd_pick.clicked.connect(self._psd_pick_convert)
+
+        # --- persist changes to INI ---
+        self.gif_dither.toggled.connect(lambda v: self._save_bool_ini("gif_dither", v))
+        self.pdf_quality.valueChanged.connect(lambda v: self._save_int_ini("pdf_quality", v))
+        self.pdf_dpi.valueChanged.connect(lambda v: self._save_int_ini("pdf_dpi", v))
+        self.pdf_one_file.toggled.connect(lambda v: self._save_bool_ini("pdf_one_file", v))
+        self.psd_replace.toggled.connect(lambda v: self._save_bool_ini("psd_replace", v))
+        self.psd_auto_threads.toggled.connect(lambda v: self._save_bool_ini("psd_auto_threads", v))
+        self.psd_threads.valueChanged.connect(lambda v: self._save_int_ini("psd_threads", v))
+        self.psd_compress.valueChanged.connect(lambda v: self._save_int_ini("psd_compress", v))
+
+        QTimer.singleShot(0, self._apply_settings_from_ini)
+
+    def reset_to_defaults(self):
+        # дефолты
+        d = dict(
+            gif_dither=True,
+            pdf_quality=92,
+            pdf_dpi=100,
+            pdf_one_file=True,
+            psd_replace=False,
+            psd_auto_threads=True,
+            psd_threads=8,
+            psd_compress=7,
+        )
+
+        # UI без шумных сигналов, там где надо
+        self.gif_dither.setChecked(d["gif_dither"])
+        self.pdf_quality.setValue(d["pdf_quality"])
+        self.pdf_dpi.setValue(d["pdf_dpi"])
+        self.pdf_one_file.setChecked(d["pdf_one_file"])
+        self.psd_replace.setChecked(d["psd_replace"])
+        self.psd_auto_threads.setChecked(d["psd_auto_threads"])
+        self.psd_threads.setValue(d["psd_threads"])
+        self.psd_compress.setValue(d["psd_compress"])
+
+        # сохранить в INI
+        self._save_bool_ini("gif_dither", d["gif_dither"])
+        self._save_int_ini("pdf_quality", d["pdf_quality"])
+        self._save_int_ini("pdf_dpi", d["pdf_dpi"])
+        self._save_bool_ini("pdf_one_file", d["pdf_one_file"])
+        self._save_bool_ini("psd_replace", d["psd_replace"])
+        self._save_bool_ini("psd_auto_threads", d["psd_auto_threads"])
+        self._save_int_ini("psd_threads", d["psd_threads"])
+        self._save_int_ini("psd_compress", d["psd_compress"])
+
+    def _apply_settings_from_ini(self):
+        with group("ConversionsPanel"):
+            bind_checkbox(self.gif_dither, "gif_dither", True)
+            bind_spinbox(self.pdf_quality, "pdf_quality", 92)
+            bind_spinbox(self.pdf_dpi, "pdf_dpi", 100)
+            bind_checkbox(self.pdf_one_file, "pdf_one_file", True)
+            bind_checkbox(self.psd_replace, "psd_replace", False)
+            bind_checkbox(self.psd_auto_threads, "psd_auto_threads", True)
+            bind_spinbox(self.psd_threads, "psd_threads", 8)
+            bind_spinbox(self.psd_compress, "psd_compress", 7)
+
+    def _save_str_ini(self, key: str, value: str):
+        try:
+            shadow_attr = f"__{key}__shadow"
+            setattr(self, shadow_attr, value)
+            with group("ConversionsPanel"):
+                save_attr_string(self, shadow_attr, key)
+        except Exception:
+            pass
+
+    def _save_int_ini(self, key: str, value: int):
+        self._save_str_ini(key, str(int(value)))
+
+    def _save_bool_ini(self, key: str, value: bool):
+        self._save_str_ini(key, "1" if value else "0")
 
     def _selected_from_gallery(self, filter_func) -> list[str]:
         if self._gallery and hasattr(self._gallery, 'selected_files'):

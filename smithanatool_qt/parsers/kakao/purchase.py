@@ -243,8 +243,9 @@ def handle_buy_page(
     title_id: str,
     viewer_url: str,
     price_target: int,
-    log,
-    confirm_purchase_cb      # (price:int, balance:int|None) -> bool
+    log,   # (price:int, balance:int|None) -> bool
+    confirm_purchase_cb,
+    balance_hint: int | None = None
 ) -> str:
     """
     Когда модалки нет, но мы оказались на /buy/ticket?seriesId=...
@@ -256,13 +257,14 @@ def handle_buy_page(
         return "absent"
 
     # баланс по желанию — выводим в диалог
-    bal = None
-    try:
-        bal = read_balance(context, title_id, log)
-        if bal is not None:
-            log(f"[INFO] Текущий баланс: {bal} 캐시.")
-    except Exception:
-        pass
+    bal = balance_hint
+    if bal is None:
+        try:
+            bal = read_balance(context, title_id, log)  # запасной путь
+            if bal is not None:
+                log(f"[INFO] Текущий баланс: {bal} 캐시.")
+        except Exception:
+            pass
 
     ok = False
     if callable(confirm_purchase_cb):

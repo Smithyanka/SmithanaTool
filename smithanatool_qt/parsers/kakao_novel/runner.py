@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Callable, Iterable, List, Optional, Tuple, Dict
 from pathlib import Path
 import os
+from typing import Any
 from playwright.sync_api import sync_playwright
 from smithanatool_qt.parsers.kakao.constants import UA
 from smithanatool_qt.parsers.kakao.io import ensure_dir
@@ -38,6 +39,30 @@ def run_novel_parser(
     Основной раннер новелл Kakao.
     """
     from smithanatool_qt.parsers.kakao.purchase import handle_ticket_modal, handle_buy_page
+
+    def _is_rental_declined(res: Any) -> bool:
+        """
+        Унифицированная проверка «отказа от использования тикета».
+        """
+        return res in (False, "declined", "skip", "skipped", "no", "rental_declined")
+
+    def _wait_progress_increase(page, text_frame, baseline_pct: float, timeout_ms: int = 300,
+                                poll_ms: int = 60) -> float:
+        """
+        Ждём небольшого роста прогресса чтения и возвращаем актуальный процент.
+        Если роста нет за отведённое время — просто возвращаем последний замер.
+        """
+        tries = max(1, int(timeout_ms // poll_ms))
+        cur = _get_progress_percent(page, text_frame)
+        for _ in range(tries):
+            if cur >= 0 and baseline_pct >= 0 and cur > baseline_pct + 0.01:
+                return cur
+            try:
+                page.wait_for_timeout(poll_ms)
+            except Exception:
+                pass
+            cur = _get_progress_percent(page, text_frame)
+        return cur
 
     log = (on_log or (lambda s: None))
     should_stop = (stop_flag or (lambda: False))
@@ -231,6 +256,10 @@ def run_novel_parser(
                     )
                 except Exception:
                     res = None
+
+                if _is_rental_declined(res):
+                    _log("[SKIP] Пользователь отказался использовать тикет — пропускаю главу без платных действий.")
+                    continue
 
                 if res == "need_buy" or "/buy/ticket" in (page.url or ""):
                     ok = handle_buy_page(

@@ -38,6 +38,34 @@ from .purchase import looks_locked, handle_ticket_modal, handle_buy_page, handle
 from typing import Optional, Iterable, Callable
 
 
+def _to_int_cash(txt: Optional[str]) -> Optional[int]:
+    if not txt:
+        return None
+    m = re.search(r'([\d,]+)\s*캐시', txt)
+    return int(m.group(1).replace(',', '')) if m else None
+
+def _extract_buy_info(page):
+    """
+    Считывает цену главы (кнопка вида "200캐시"), подпись главы ("1장") и баланс ("1,000캐시")
+    с buy/ticket-страницы или карточки покупки.
+    """
+    # 1) цена из кнопки "…캐시"
+    price_btn = page.locator('div.flex.items-center.justify-between >> button:has-text("캐시")').first
+    price_txt = price_btn.text_content() if price_btn.count() > 0 else None
+    price = _to_int_cash(price_txt)
+
+    # 2) подпись главы рядом (например, "1장")
+    label_span = page.locator('div.flex.items-center.justify-between span.font-small1-bold.text-el-60').first
+    chapter_label = (label_span.text_content() if label_span.count() > 0 else "" ) or ""
+    chapter_label = chapter_label.strip()
+
+    # 3) баланс — любой span с "캐시" (если на твоей вёрстке это второй — поменяй .first на .nth(1))
+    bal_span = page.locator('span.font-small1-bold.text-el-60:has-text("캐시")').first
+    balance_txt = bal_span.text_content() if bal_span.count() > 0 else None
+    balance = _to_int_cash(balance_txt)
+
+    return price, balance, chapter_label
+
 # --------- вспомогательные парсеры / построители карт ---------
 def parse_chapter_spec(spec: str) -> List[int]:
     """'1,2,5-7 10' → [1,2,5,6,7,10] (без дублей, порядок сохраняем)."""
@@ -398,7 +426,7 @@ def run_parser(
 
                     cur_count = len(id_to_num)
                     try:
-                        log(f"[DEBUG] Найдено ссылок /viewer/: {cur_count} (+{cur_count - prev_count})")
+                        log(f"[DEBUG] Найдено ссылок: {cur_count} (+{cur_count - prev_count})")
                     except Exception:
                         pass
 
@@ -567,6 +595,13 @@ def run_parser(
 
                 page.goto(url, wait_until="domcontentloaded", timeout=90000)
                 page.wait_for_load_state("networkidle", timeout=60000)
+                try:
+                    page.evaluate("""() => {
+                        document.querySelectorAll('a[href*="/buy/ticket"]').forEach(a => a.removeAttribute('target'));
+                    }""")
+                except Exception:
+                    pass
+
                 # --- 0) если показалась модалка об истечении аренды — закроем её ---
                 try:
                     handled_expire = handle_rental_expired_modal(page, log)
@@ -587,26 +622,44 @@ def run_parser(
 
                 # --- 2) buy-страница без модалки ---
 
+                # --- 2) buy-страница без модалки ---
                 if res == "need_buy" or "/buy/ticket" in (page.url or ""):
-                    ok = handle_buy_page(page, context, title_id, url, PRICE, log,
-                                         confirm_purchase_cb=(on_confirm_purchase or (lambda price, bal: True)))
+                    # Дождёмся, чтобы карточка покупки успела дорендериться
+                    try:
+                        page.wait_for_selector('div.flex.items-center.justify-between', timeout=1500)
+                    except Exception:
+                        pass
+
+                    # Считаем реальные price/balance/label
+                    price_parsed, balance_parsed, chapter_label_from_buy = _extract_buy_info(page)
+
+                    # Передаём В РУКИ ОБРАБОТЧИКУ реальную цену (если не удалось — падать не будем, используем старую константу)
+                    ok = handle_buy_page(
+                        page, context, title_id, url,
+                        (price_parsed if price_parsed is not None else PRICE),
+                        log,
+                        confirm_purchase_cb=(on_confirm_purchase or (lambda price, bal: True)),
+                        balance_hint=balance_parsed
+                    )
+
                     if ok != "purchased":
                         if ok == "skipped":
                             log("[SKIP] Покупка тикета отменена пользователем.")
                         else:
                             log("[SKIP] Покупка не выполнена.")
                         continue
+
                     # после успешной покупки вернёмся в viewer и попробуем снова
-                    res3 = handle_ticket_modal(page, context, title_id, url, PRICE, log,
-                                               chapter_label=chap_label,
-                                               confirm_use_rental_cb=(
-                                                           on_confirm_use_rental or (lambda r, o, b, cl: True)),
-                                               confirm_purchase_cb=on_confirm_purchase)
+                    res3 = handle_ticket_modal(
+                        page, context, title_id, url,
+                        (price_parsed if price_parsed is not None else PRICE),
+                        log,
+                        chapter_label=chap_label,
+                        confirm_use_rental_cb=(on_confirm_use_rental or (lambda r, o, b, cl: True)),
+                        confirm_purchase_cb=on_confirm_purchase
+                    )
                     if res3 == "skipped":
-                        # пользователь отказал / не смогли нажать — эту главу пропускаем
                         continue
-                    # res3 == 'consumed' или 'purchased' — ок, можно идти дальше
-                    # res3 == 'absent' — модалки нет, значит доступ открыт, идём дальше
 
                 # --- 3) гарантированно оказываемся на viewer + легкий «прогрев» ---
                 page = _ensure_on_viewer(context, page, url, log)

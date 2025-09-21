@@ -268,7 +268,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         row_save.addWidget(self.btn_save_as)
         row_save.addStretch(1)
         v.addLayout(row_save)
-        v.addSpacing(10)
+        v.addSpacing(4)
 
         help_text = (
             "Чтобы выделить область, зажмите ПКМ"

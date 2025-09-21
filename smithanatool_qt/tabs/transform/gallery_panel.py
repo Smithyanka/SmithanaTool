@@ -98,7 +98,7 @@ class GalleryPanel(QWidget):
         row_sort.addWidget(self.cmb_sort_order)
         row_sort.addStretch(1)
         v.addLayout(row_sort)
-        v.addSpacing(5)
+        v.addSpacing(7)
 
         v.addWidget(QLabel("Файлы"))
         self.list = _RightSelectableList()

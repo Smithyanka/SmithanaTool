@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTextBrowser, QFrame, QHBoxLayout
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPalette
 
 def _card(title_html: str, body_widget: QWidget) -> QFrame:
     card = QFrame()
@@ -20,6 +21,8 @@ def _card(title_html: str, body_widget: QWidget) -> QFrame:
 class InfoTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setProperty("keep_qss", True)
+
 
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 12, 14, 12)
@@ -34,15 +37,7 @@ class InfoTab(QWidget):
         header.setAlignment(Qt.AlignCenter)
         root.addWidget(header)
 
-        # --- Подзаголовок (ссылка на GitHub) ---
-        update_label = QLabel(
-            '<div style="text-align:center; font-size:18px;">'
-            '<a href="https://github.com/Smithyanka/SmithanaToolGit/releases">Проверить обновления (github)</a>'
-            '</div>'
-        )
-        update_label.setOpenExternalLinks(True)
-        update_label.setAlignment(Qt.AlignCenter)
-        root.addWidget(update_label)
+
 
         # --- Карточка: Используемые модули ---
         mods = QTextBrowser()
@@ -64,11 +59,21 @@ class InfoTab(QWidget):
 
         # --- Карточка: Полезные ссылки ---
         links = QTextBrowser()
+        links.setObjectName("infoLinks")
         links.setOpenExternalLinks(True)
         links.setFrameShape(QFrame.NoFrame)
         links.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         links.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         links.setReadOnly(True)
+
+        # Стили для HTML-содержимого QTextBrowser
+        links.document().setDefaultStyleSheet("""
+        a { color: #1E88E5; text-decoration: none; }
+        a:visited { color: #1fbae5; }
+        a:hover { text-decoration: underline; }
+        ul { margin-left: 14px; padding-left: 0; }  /* заодно фикс отступов */
+        """)
+
         links.setHtml(
             "<ul'>"
             "<li><a href='https://sites.google.com/view/scanlatewait'>Шрифты</a></li>"
@@ -87,13 +92,27 @@ class InfoTab(QWidget):
         root.addLayout(row)
         root.addStretch(1)
 
+
+
         # --- Контакты внизу по центру ---
+
+        # --- Подзаголовок (ссылка на GitHub) ---
+        update_label = QLabel(
+            '<div style="text-align:center; font-size:18px;">'
+            '<a href="https://github.com/Smithyanka/SmithanaToolGit/releases" style="color:#1E88E5; text-decoration:none;">Проверить обновления (github)</a>'
+            '</div>'
+        )
+        update_label.setOpenExternalLinks(True)
+        update_label.setAlignment(Qt.AlignCenter)
+        root.addWidget(update_label)
+
         footer = QLabel(
             '<div style="text-align:center; font-size:18px;">'
             'По вопросам и предложениям '
-            '<a href="https://t.me/smithyanka">t.me/smithyanka</a>'
+            '<a href="https://t.me/smithyanka" style="color:#1E88E5; text-decoration:none;">@smithyanka</a>'
             '</div>'
         )
+        footer.setTextFormat(Qt.RichText)
         footer.setOpenExternalLinks(True)
         footer.setAlignment(Qt.AlignCenter)
         root.addWidget(footer)

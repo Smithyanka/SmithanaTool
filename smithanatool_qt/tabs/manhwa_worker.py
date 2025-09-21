@@ -26,6 +26,8 @@ class ParserConfig:
     compress_level: int = 6
     strip_metadata: bool = True
     per: int = 12
+    auto_confirm_purchase: bool = False  # автопокупка без вопросов
+    auto_confirm_use_rental: bool = False  # авто-использование 대여권
 
 class ManhwaParserWorker(QObject):
     log = Signal(str)
@@ -34,12 +36,20 @@ class ManhwaParserWorker(QObject):
     need_login = Signal()  # UI should show "press Continue after login"
     error = Signal(str)
 
+    ask_purchase = Signal(object, object)  # ch_num, price(int|None)
+    ask_use_rental = Signal(int, int, object, str)  # rental_count, own_count, balance(int|None), chapter_label
+
     def __init__(self, cfg: ParserConfig):
         super().__init__()
         self.cfg = cfg
         self._stop_event = threading.Event()
         self._resume_event = threading.Event()
         self._thread: Optional[QThread] = None
+
+        self._purchase_event = threading.Event()
+        self._purchase_result: bool = False
+        self._rental_event = threading.Event()
+        self._rental_result: bool = False
 
     # threading helpers
     def move_to_thread_and_start(self):
@@ -55,6 +65,16 @@ class ManhwaParserWorker(QObject):
         th.finished.connect(lambda: setattr(self, "_thread", None))
 
         th.start()
+
+    @Slot(bool)
+    def provide_purchase_answer(self, ans: bool):
+        self._purchase_result = bool(ans)
+        self._purchase_event.set()
+
+    @Slot(bool)
+    def provide_use_rental_answer(self, ans: bool):
+        self._rental_result = bool(ans)
+        self._rental_event.set()
 
     @Slot()
     def stop(self):
@@ -121,14 +141,30 @@ class ManhwaParserWorker(QObject):
                 return
 
             auto_cfg = self._build_auto_concat()
+            def _confirm_purchase(price: Optional[int], balance: Optional[int]) -> bool:
+                if self.cfg.auto_confirm_purchase:
+                    self.log.emit(f"[ASK] Покупка за {price} кредитов (авто).")
+                    return True
+                self._purchase_event.clear()
+                self.ask_purchase.emit(price, balance)
+                self._purchase_event.wait()
+                self.log.emit(
+                    "[OK] Покупка разрешена пользователем." if self._purchase_result else "[SKIP] Покупка отклонена пользователем.")
+                return self._purchase_result
 
-            def _confirm_purchase(ch_num: int, price: Optional[int]) -> bool:
-                self.log.emit(f"[INFO] Глава {ch_num}: покупка недоступна (авто-отказ).")
-                return False
-
-            def _confirm_use_rental(rental_count: int, own_count: int, balance: Optional[int], chapter_label: str) -> bool:
-                self.log.emit(f"[ASK] Использовать тикет аренды для {chapter_label}? (авто: да)")
-                return True
+            def _confirm_use_rental(rental_count: int, own_count: int, balance: Optional[int],
+                                    chapter_label: str) -> bool:
+                # если автоприменение 대여권 — не спрашиваем
+                if self.cfg.auto_confirm_use_rental:
+                    self.log.emit(f"[ASK] Использовать тикет аренды для {chapter_label}? (авто: да)")
+                    return True
+                # иначе — спросить UI и подождать
+                self._rental_event.clear()
+                self.ask_use_rental.emit(rental_count, own_count, balance, chapter_label)
+                self._rental_event.wait()
+                self.log.emit(
+                    "[OK] Использую тикет." if self._rental_result else "[SKIP] Пользователь отказал от использования тикета.")
+                return self._rental_result
 
             run_parser(
                 title_id=title_id,
@@ -147,5 +183,4 @@ class ManhwaParserWorker(QObject):
         except Exception as e:
             self.error.emit(str(e))
         finally:
-            # НЕ трогаем QThread изнутри потока (никаких quit()/wait() здесь) — это вызывало крэш
             self.finished.emit()
