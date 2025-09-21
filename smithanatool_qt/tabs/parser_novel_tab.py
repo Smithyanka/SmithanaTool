@@ -5,7 +5,7 @@ from html import escape as _html_escape
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, QLineEdit, QTextEdit, QPushButton,
     QSplitter, QRadioButton, QButtonGroup, QFileDialog, QMessageBox, QSizePolicy,
-    QGroupBox, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
+    QGroupBox, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea, QFrame
 )
 
 from PySide6.QtCore import Qt, Slot, QTimer, QStandardPaths
@@ -95,7 +95,17 @@ class ParserNovelTab(QWidget):
         self.btn_clear = QPushButton("Очистить лог")
         al = QHBoxLayout(); al.setContentsMargins(0,0,0,0); al.setSpacing(6); al.addStretch(1); al.addWidget(self.btn_clear); vr.addLayout(al)
 
-        splitter.addWidget(left); splitter.addWidget(right); splitter.setSizes([520, 760])
+        left_scroll = QScrollArea(self)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setWidget(left)
+
+        splitter.addWidget(left_scroll)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([520, 760])
 
         # Run controls + Open folder (как в манхве)
         self.btn_run = QPushButton("Запустить"); self.btn_run.setEnabled(False)
@@ -303,8 +313,9 @@ class ParserNovelTab(QWidget):
             return
         ids_grp = QGroupBox("Сохранённые ID")
         self._ids_grp = ids_grp
-        ids_v = QVBoxLayout(ids_grp);
-        ids_v.setContentsMargins(8, 8, 8, 8);
+        ids_grp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        ids_v = QVBoxLayout(ids_grp)
+        ids_v.setContentsMargins(8, 8, 8, 8)
         ids_v.setSpacing(6)
 
         self.ids_table = QTableWidget(0, 2)

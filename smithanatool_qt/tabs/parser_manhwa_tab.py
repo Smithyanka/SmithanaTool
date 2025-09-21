@@ -218,7 +218,17 @@ class ParserManhwaTab(QWidget):
         al = QHBoxLayout(); al.setContentsMargins(0, 0, 0, 0); al.setSpacing(6)
         al.addStretch(1); al.addWidget(self.btn_clear); vr.addLayout(al)
 
-        splitter.addWidget(left); splitter.addWidget(right); splitter.setSizes([520, 760])
+        left_scroll = QScrollArea(self)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFrameShape(QFrame.NoFrame)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setWidget(left)
+
+        splitter.addWidget(left_scroll)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 0)  # левая колонка – по содержимому + скролл
+        splitter.setStretchFactor(1, 1)  # правая – тянется
+        splitter.setSizes([520, 760])
 
         # Wiring
         self.btn_pick_out.clicked.connect(self._pick_out)
@@ -325,6 +335,7 @@ class ParserManhwaTab(QWidget):
             return
         ids_grp = QGroupBox("Сохранённые ID")
         self._ids_grp = ids_grp
+        ids_grp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         ids_v = QVBoxLayout(ids_grp)
         ids_v.setContentsMargins(8, 8, 8, 8)
         ids_v.setSpacing(6)
