@@ -18,6 +18,34 @@ from smithanatool_qt.settings_bind import (
 )
 
 from .novel_worker import NovelParserWorker, NovelParserConfig
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
+
+class ElidedLabel(QLabel):
+    """QLabel, который автоматически укорачивает длинный текст с многоточием.
+    По умолчанию — в середине (ElideMiddle). Хранит полный текст в tooltip.
+    """
+    def __init__(self, text:str="", mode=Qt.ElideMiddle, parent=None):
+        super().__init__(text, parent)
+        self._full_text = text or ""
+        self._mode = mode
+        self.setToolTip(self._full_text if self._full_text else "")
+        self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+    def set_full_text(self, text: str):
+        self._full_text = text or ""
+        self.setToolTip(self._full_text if self._full_text else "")
+        self._apply_elide()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._apply_elide()
+
+    def _apply_elide(self):
+        # Немного оставим место на отступы
+        avail = max(10, self.width() - 8)
+        elided = self.fontMetrics().elidedText(self._full_text, self._mode, avail)
+        super().setText(elided)
 
 
 def _open_in_explorer(path: str):
@@ -80,7 +108,7 @@ class ParserNovelTab(QWidget):
         # Output dir (как в манхве)
         gl.addWidget(QLabel("Папка сохранения:"), row, 0, Qt.AlignLeft)
         self.btn_pick_out = QPushButton("Выбрать папку…")
-        self.lbl_out = QLabel("— не выбрано —"); self.lbl_out.setStyleSheet("color:#a00")
+        self.lbl_out = ElidedLabel("— не выбрано —"); self.lbl_out.setStyleSheet("color:#a00")
         self.btn_pick_out.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.lbl_out.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         hl = QHBoxLayout(); hl.setContentsMargins(0,0,0,0); hl.setSpacing(6)
@@ -271,6 +299,8 @@ class ParserNovelTab(QWidget):
             color = "#e8a400"
         elif s.startswith("[OK]"):
             color = "#0a0"
+        elif s.startswith("[LOGIN]"):
+            color = "#c60"
         elif s.startswith("[DONE]"):
             color = "#06c"
         elif s.startswith("[AUTO]"):
@@ -501,7 +531,7 @@ class ParserNovelTab(QWidget):
                 self._out_dir = paths[0]
                 # сразу сохраним в INI
                 with group("ParserNovel"):
-                    save_attr_string(self, "_out_dir", "out_dir")
+                    self.lbl_out.set_full_text(self._out_dir)
                 # Отразим в UI
                 if hasattr(self, "lbl_out"):
                     self.lbl_out.setText(self._out_dir)
@@ -534,14 +564,12 @@ class ParserNovelTab(QWidget):
             QMessageBox.warning(self, "Парсер", "Сначала выберите папку сохранения.")
             return
         cfg = self._collect_cfg()
-        self.txt_log.clear()
         self._append_log("[DEBUG] Запуск парсера новелл Kakao.")
         self._worker = NovelParserWorker(cfg)
         self._worker.ask_purchase.connect(self._on_ask_purchase)
         self._worker.ask_use_rental.connect(self._on_ask_use_rental)
 
         self._worker.log.connect(self._append_log)
-        self._worker.need_login.connect(lambda: self._append_log("[AUTO] Требуется вход на сайте. Войдите в браузере, затем нажмите 'Продолжить после входа'."))
         self._worker.error.connect(self._on_error)
         self._worker.finished.connect(self._on_finished)
         QTimer.singleShot(0, self._worker.start)
@@ -601,7 +629,7 @@ class ParserNovelTab(QWidget):
                 pass
 
         # Отразим пути в подписи (цвет — зелёный если задано)
-        self.lbl_out.setText(self._out_dir or "— не выбрано —")
+        self.lbl_out.set_full_text(self._out_dir or "— не выбрано —")
         self.lbl_out.setStyleSheet("color:#080" if self._out_dir else "color:#a00")
         self.btn_run.setEnabled(bool(self._out_dir))
         self.btn_open_dir.setEnabled(bool(self._out_dir))

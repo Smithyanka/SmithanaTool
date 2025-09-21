@@ -7,6 +7,8 @@ from typing import Optional, List, Iterable, Callable
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from smithanatool_qt.parsers.kakao.core import run_parser
+from typing import Optional
+
 
 @dataclass
 class ParserConfig:
@@ -50,6 +52,7 @@ class ManhwaParserWorker(QObject):
         self._purchase_result: bool = False
         self._rental_event = threading.Event()
         self._rental_result: bool = False
+        self._browser_closed_seen = False
 
     # threading helpers
     def move_to_thread_and_start(self):
@@ -78,7 +81,14 @@ class ManhwaParserWorker(QObject):
 
     @Slot()
     def stop(self):
+        # Сигнал “стоп”
         self._stop_event.set()
+        # ВАЖНО: разбудить ВСЕ возможные ожидания,
+        # чтобы поток не висел в .wait()
+        self._resume_event.set()
+        self._purchase_event.set()
+        self._rental_event.set()
+        self.log.emit("[STOP] Запрошена остановка.")
 
     @Slot()
     def resume_after_login(self):
@@ -88,13 +98,18 @@ class ManhwaParserWorker(QObject):
         return self._stop_event.is_set()
 
     def _on_need_login(self):
-        # Notify UI and block until user clicks "Continue after login"
         self._resume_event.clear()
         self.need_login.emit()
-        # Block this worker thread until resumed
-        self._resume_event.wait()
+        # Ждём либо "Продолжить", либо "Стоп"
+        while not self._stop_event.is_set():
+            if self._resume_event.wait(timeout=0.2):
+                break
 
     def _on_log(self, s: str):
+        if not self._browser_closed_seen and self._is_browser_closed_logline(s):
+            self._browser_closed_seen = True
+            self.error.emit("Браузер был закрыт")
+            return
         self.log.emit(s)
 
     def _build_auto_concat(self) -> Optional[dict]:
@@ -113,6 +128,65 @@ class ManhwaParserWorker(QObject):
             "enable": True,
         }
 
+    def _is_browser_closed_logline(self, s: str) -> bool:
+        s_low = (s or "").lower()
+        needles = [
+            # типичные формулировки Playwright/Chromium в логах:
+            "page.goto:",
+            "net::err_aborted",
+            "frame was detached",
+            "page closed",
+            "navigation failed because page was closed",
+            "target page, context or browser has been closed",
+            "execution context was destroyed",
+            # на всякий — общие сигнатуры:
+            "no such window",
+            "target closed",
+            "chrome not reachable",
+            "disconnected: not connected to devtools",
+            "websocket disconnected",
+        ]
+        return any(n in s_low for n in needles)
+
+    @staticmethod
+    def _browser_closed_text_if_any(err: BaseException) -> Optional[str]:
+        """
+        Распознаём ситуации, когда пользователь закрыл браузер/вкладку вручную
+        (Playwright/Selenium/Chromium). Возвращаем унифицированный текст.
+        """
+        s = (str(err) or "")
+        s_low = s.lower()
+
+        needles = [
+            # Chrome / Selenium / DevTools:
+            "chrome not reachable",
+            "disconnected: not connected to devtools",
+            "websocket disconnected",
+            "target closed",
+            "no such window",
+            "no such window: target window already closed",
+            "invalid session id",
+            "connection refused",
+            "net::err_connection_closed",
+            "net::err_internet_disconnected",
+            "browser has been closed",
+            "renderer process unavailable",
+            "unknown error: cannot determine loading status",
+            "session deleted because of page crash",
+
+            # Playwright / Chromium навигация после закрытия:
+            "page closed",
+            "target page, context or browser has been closed",
+            "navigation failed because page was closed",
+            "execution context was destroyed",
+            "frame was detached",
+            "err_aborted",          # 'net::ERR_ABORTED'
+            "page.goto:",           # часто присутствует в сообщении
+        ]
+
+        if any(n in s_low for n in needles):
+            return "Браузер был закрыт"
+        return None
     @Slot()
     def _run(self):
         self.started.emit()
@@ -141,27 +215,35 @@ class ManhwaParserWorker(QObject):
                 return
 
             auto_cfg = self._build_auto_concat()
+
             def _confirm_purchase(price: Optional[int], balance: Optional[int]) -> bool:
                 if self.cfg.auto_confirm_purchase:
                     self.log.emit(f"[ASK] Покупка за {price} кредитов (авто).")
                     return True
                 self._purchase_event.clear()
                 self.ask_purchase.emit(price, balance)
-                self._purchase_event.wait()
+                # Ждём с таймаутом и уважением к stop()
+                while not self._stop_event.is_set():
+                    if self._purchase_event.wait(timeout=0.2):
+                        break
+                if self._stop_event.is_set():
+                    return False
                 self.log.emit(
                     "[OK] Покупка разрешена пользователем." if self._purchase_result else "[SKIP] Покупка отклонена пользователем.")
                 return self._purchase_result
 
             def _confirm_use_rental(rental_count: int, own_count: int, balance: Optional[int],
                                     chapter_label: str) -> bool:
-                # если автоприменение 대여권 — не спрашиваем
                 if self.cfg.auto_confirm_use_rental:
                     self.log.emit(f"[ASK] Использовать тикет аренды для {chapter_label}? (авто: да)")
                     return True
-                # иначе — спросить UI и подождать
                 self._rental_event.clear()
                 self.ask_use_rental.emit(rental_count, own_count, balance, chapter_label)
-                self._rental_event.wait()
+                while not self._stop_event.is_set():
+                    if self._rental_event.wait(timeout=0.2):
+                        break
+                if self._stop_event.is_set():
+                    return False
                 self.log.emit(
                     "[OK] Использую тикет." if self._rental_result else "[SKIP] Пользователь отказал от использования тикета.")
                 return self._rental_result
@@ -181,6 +263,10 @@ class ManhwaParserWorker(QObject):
                 by_index=by_index,
             )
         except Exception as e:
-            self.error.emit(str(e))
+            friendly = self._browser_closed_text_if_any(e)
+            if friendly:
+                self.error.emit(friendly)
+            else:
+                self.error.emit(str(e))
         finally:
             self.finished.emit()

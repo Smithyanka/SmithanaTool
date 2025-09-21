@@ -128,6 +128,170 @@ def run_novel_parser(
                 except Exception:
                     pass
 
+                # ↓↓↓ Дублированный блок подготовки списка глав для ветки с сохранённой сессией ↓↓↓
+                content_url = f"https://page.kakao.com/content/{title_id}"
+                if not chapters:
+                    _log(f"[OPEN] Тайтл → {content_url}")
+                    page.goto(content_url, wait_until="domcontentloaded", timeout=90000)
+                    page.wait_for_load_state("networkidle", timeout=60000)
+
+                # ---------- формирование списка для скачивания ----------
+                to_fetch: List[Tuple[str, Optional[int], Optional[int], str]] = []
+
+                # Ветка «по viewerId» — не строим карту, переходим сразу к циклу
+                if chapters:
+                    chapter_ids = [str(x) for x in chapters if str(x).isdigit()]
+                    _log(f"[INFO] Режим по ID: сразу открываю viewer для: {chapter_ids}")
+                    to_fetch = [(vid, None, None, vid) for vid in chapter_ids]
+                else:
+                    # Режим по номерам/томам: авто-определение направления и сбор карты
+                    vols = parse_num_spec(volume_spec or "")
+                    chs  = parse_num_spec(chapter_spec or "")
+
+                    # Автовыбор направления (вверх/вниз) по видимому диапазону
+                    prefer: str | None = None
+                    try:
+                        _vis = collect_chapter_map_both(page, title_id) or []
+                        _nums = [r.get('num') for r in _vis if isinstance(r.get('num'), int)]
+                        if _nums and chs:
+                            _min_v, _max_v = min(_nums), max(_nums)
+                            _min_t, _max_t = min(chs), max(chs)
+                            if _max_t < _min_v:
+                                prefer = 'down'  # целевая глава «меньше» — раскрываем вниз
+                            elif _min_t > _max_v:
+                                prefer = 'up'    # целевая «больше» — раскрываем вверх
+                            else:
+                                # внутри диапазона — выберем ближайшее направление
+                                prefer = 'down' if (_min_t <= (_min_v + _max_v)//2) else 'up'
+                        _log(f"[AUTO] Предпочтительное направление раскрытия: {prefer or 'auto'}")
+                    except Exception:
+                        prefer = None
+
+                    # Инкрементальная карта с приоритетом выбранного направления;
+                    # если нужная глава уже в зоне видимости — функция вернёт видимый срез
+                    cmap = _prepare_maps_incremental(page, title_id, _log, want_chs=chs, want_vols=vols, prefer=prefer)
+                    if not cmap:
+                        _log("[WARN] Не удалось обнаружить ни одной главы на странице контента.")
+                        try:
+                            context.close(); browser.close()
+                        except Exception:
+                            pass
+                        return
+
+                    # Построим вспомогательные индексы
+                    id_to_meta: Dict[str, Dict[str, object]] = {}
+                    num_to_id: Dict[int, str] = {}
+                    vol_to_ids: Dict[int, List[str]] = {}
+                    vol_num_to_id: Dict[Tuple[int,int], str] = {}
+
+                    for r in cmap:
+                        vid = str(r.get("id") or "") or str(r.get("href") or "").rpartition("/")[-1]
+                        if not vid:
+                            continue
+                        num = r.get("num")
+                        vol = r.get("vol")
+                        lbl = str(r.get("label") or "")
+                        id_to_meta[vid] = {"num": num, "vol": vol, "label": lbl}
+                        if isinstance(num, int) and num not in num_to_id:
+                            num_to_id[num] = vid
+                        if isinstance(vol, int):
+                            vol_to_ids.setdefault(vol, []).append(vid)
+                            if isinstance(num, int):
+                                vol_num_to_id.setdefault((vol, num), vid)
+
+                    # Сформируем to_fetch согласно фильтрам
+                    if vols and chs:
+                        for v in vols:
+                            for c in chs:
+                                vid = vol_num_to_id.get((v, c))
+                                if not vid:
+                                    _log(f"[SKIP] Не нашёл главу: том {v} (권), глава {c} (화).")
+                                    continue
+                                meta = id_to_meta.get(vid, {})
+                                to_fetch.append((vid, c, v, meta.get("label") or f"{v}권 {c}화"))
+                    elif vols and not chs:
+                        for v in vols:
+                            ids = vol_to_ids.get(v, [])
+                            if not ids:
+                                _log(f"[SKIP] Не найден том {v} (권).")
+                                continue
+                            for vid in ids:
+                                meta = id_to_meta.get(vid, {})
+                                to_fetch.append((vid, meta.get("num"), v, meta.get("label") or f"{v}권"))
+                    elif chs and not vols:
+                        for c in chs:
+                            vid = num_to_id.get(c)
+                            if not vid:
+                                _log(f"[SKIP] Не найден номер главы {c} (화).")
+                                continue
+                            meta = id_to_meta.get(vid, {})
+                            to_fetch.append((vid, c, meta.get("vol"), meta.get("label") or f"{c}화"))
+                    else:
+                        # если фильтров нет — берём всё по порядку
+                        for r in cmap:
+                            vid = str(r.get("id") or "") or str(r.get("href") or "").rpartition("/")[-1]
+                            if not vid:
+                                continue
+                            to_fetch.append((vid, r.get("num"), r.get("vol"), str(r.get("label") or vid)))
+                PRICE = 100  # целевая цена (как в манхва-UI)
+
+            else:
+                _log("[INFO] Сохранённая сессия не найдена — потребуется вход.")
+                context = browser.new_context(
+                    user_agent=UA, java_script_enabled=True, bypass_csp=True,
+                    viewport={"width": 1200, "height": 1800}, ignore_https_errors=True,
+                    locale="ko-KR", timezone_id="Asia/Seoul",
+                )
+                page = context.new_page()
+                # Открываем главную и ждём ручного входа
+                page.goto("https://page.kakao.com", wait_until="domcontentloaded", timeout=90000)
+                page.wait_for_load_state("networkidle", timeout=300000)
+                _log("[LOGIN] Открылся браузер. Войдите в аккаунт, затем нажмите «Продолжить после входа».")
+                try:
+                    if on_need_login:
+                        on_need_login()
+                except Exception:
+                    pass
+
+                # Возможна остановка пользователем
+                if stop_flag and stop_flag():
+                    _log("[STOP] Остановлено пользователем во время логина.")
+                    try:
+                        context.close(); browser.close()
+                    except Exception:
+                        pass
+                    return
+
+                # Сохраняем сессию и пересоздаём контекст уже с ней
+                try:
+                    context.storage_state(path=str(state_path))
+                    _log(f"[OK] Авторизация сохранена: {state_path}")
+                except Exception:
+                    _log("[WARN] Не удалось сохранить состояние сессии. Продолжаю без него.")
+                try:
+                    context.close()
+                except Exception:
+                    pass
+
+                context = browser.new_context(
+                    user_agent=UA, java_script_enabled=True, bypass_csp=True,
+                    viewport={"width": 1600, "height": 2600}, ignore_https_errors=True,
+                    locale="ko-KR", timezone_id="Asia/Seoul",
+                    storage_state=str(state_path) if state_path.exists() else None,
+                )
+                page = context.new_page()
+                try:
+                    # блокируем тяжёлые ресурсы как и в ветке со state
+                    def _should_block(req):
+                        rt = (req.resource_type or "").lower()
+                        url = (req.url or "").lower()
+                        if rt in ("font", "media"):
+                            return True
+                        bad = ("doubleclick", "googletagmanager", "googletagservices", "analytics", "criteo", "adsystem")
+                        return any(b in url for b in bad)
+                    context.route("**/*", lambda route: route.abort() if _should_block(route.request) else route.continue_())
+                except Exception:
+                    pass
                 content_url = f"https://page.kakao.com/content/{title_id}"
                 if not chapters:
                     _log(f"[OPEN] Тайтл → {content_url}")
@@ -258,7 +422,7 @@ def run_novel_parser(
                     res = None
 
                 if _is_rental_declined(res):
-                    _log("[SKIP] Пользователь отказался использовать тикет — пропускаю главу без платных действий.")
+                    #_log("[SKIP] Пользователь отказался использовать тикет — пропускаю главу без платных действий.")
                     continue
 
                 if res == "need_buy" or "/buy/ticket" in (page.url or ""):
@@ -471,7 +635,6 @@ def run_novel_parser(
 
                     # иначе продолжаем цикл без принудительного break
 
-                _log(f"Завершено.")
 
             # закрытие
             try:
@@ -479,7 +642,5 @@ def run_novel_parser(
             except Exception:
                 pass
 
-        if not should_stop():
-            _log("Завершено.")
     except Exception as e:
         _log(f"[ERROR] {e}")

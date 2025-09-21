@@ -20,6 +20,34 @@ from smithanatool_qt.settings_bind import (
 
 from .manhwa_worker import ManhwaParserWorker, ParserConfig
 
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
+
+class ElidedLabel(QLabel):
+    """QLabel, который автоматически укорачивает длинный текст с многоточием.
+    По умолчанию — в середине (ElideMiddle). Хранит полный текст в tooltip.
+    """
+    def __init__(self, text:str="", mode=Qt.ElideMiddle, parent=None):
+        super().__init__(text, parent)
+        self._full_text = text or ""
+        self._mode = mode
+        self.setToolTip(self._full_text if self._full_text else "")
+        self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+    def set_full_text(self, text: str):
+        self._full_text = text or ""
+        self.setToolTip(self._full_text if self._full_text else "")
+        self._apply_elide()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._apply_elide()
+
+    def _apply_elide(self):
+        # Немного оставим место на отступы
+        avail = max(10, self.width() - 8)
+        elided = self.fontMetrics().elidedText(self._full_text, self._mode, avail)
+        super().setText(elided)
 
 
 def _open_in_explorer(path: str):
@@ -85,7 +113,7 @@ class ParserManhwaTab(QWidget):
         # Save dir
         gl.addWidget(QLabel("Папка сохранения:"), row, 0, Qt.AlignLeft)
         self.btn_pick_out = QPushButton("Выбрать папку…")
-        self.lbl_out = QLabel("— не выбрано —"); self.lbl_out.setStyleSheet("color:#a00")
+        self.lbl_out = ElidedLabel("— не выбрано —"); self.lbl_out.setStyleSheet("color:#a00")
         self.btn_pick_out.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.lbl_out.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         hl = QHBoxLayout(); hl.setContentsMargins(0, 0, 0, 0); hl.setSpacing(6)
@@ -146,7 +174,7 @@ class ParserManhwaTab(QWidget):
 
         rowa.addWidget(QLabel("Папка для склеек:"), r, 0)
         self.btn_pick_stitch = QPushButton("Выбрать…")
-        self.lbl_stitch_dir = QLabel("— не выбрано —"); self.lbl_stitch_dir.setStyleSheet("color:#a00")
+        self.lbl_stitch_dir = ElidedLabel("— не выбрано —"); self.lbl_stitch_dir.setStyleSheet("color:#a00")
         self.btn_pick_stitch.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.lbl_stitch_dir.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         hl2 = QHBoxLayout(); hl2.setContentsMargins(0, 0, 0, 0); hl2.setSpacing(6)
@@ -644,7 +672,7 @@ class ParserManhwaTab(QWidget):
         if d:
             self._out_dir = d
             with group("ParserManhwa"):
-                save_attr_string(self, "_out_dir", "out_dir")
+                self.lbl_out.set_full_text(d)
             self.lbl_out.setText(d)
             self.lbl_out.setStyleSheet("color:#080")
             self.btn_run.setEnabled(True)
@@ -661,7 +689,7 @@ class ParserManhwaTab(QWidget):
         if d:
             self._stitch_dir = d
             with group("ParserManhwa"):
-                save_attr_string(self, "_stitch_dir", "stitch_dir")
+                self.lbl_stitch_dir.set_full_text(d)
             self.lbl_stitch_dir.setText(d)
             self.lbl_stitch_dir.setStyleSheet("color:#080")
 
@@ -833,7 +861,6 @@ class ParserManhwaTab(QWidget):
             self.btn_continue.setEnabled(False)
 
     def _on_need_login(self):
-        self._append_log("[LOGIN] Открылся браузер. Войдите, потом нажмите «Продолжить после входа».")
         self.btn_continue.setEnabled(True)
 
     def _on_finished(self):
@@ -884,12 +911,12 @@ class ParserManhwaTab(QWidget):
             bind_checkbox(self.chk_strip, "strip_metadata", True)
 
         # Отразим пути в подписи (цвет — зелёный если задано)
-        self.lbl_out.setText(self._out_dir or "— не выбрано —")
+        self.lbl_out.set_full_text(self._out_dir or "— не выбрано —")
         self.lbl_out.setStyleSheet("color:#228B22" if self._out_dir else "color:#B32428")
         self.btn_run.setEnabled(bool(self._out_dir))
         self.btn_open_dir.setEnabled(bool(self._out_dir))
 
-        self.lbl_stitch_dir.setText(self._stitch_dir or "— не выбрано —")
+        self.lbl_stitch_dir.set_full_text(self._stitch_dir or "— не выбрано —")
         self.lbl_stitch_dir.setStyleSheet("color:#228B22" if self._stitch_dir else "color:#B32428")
 
         # Обновим подписи/плейсхолдеры под выбранный режим
