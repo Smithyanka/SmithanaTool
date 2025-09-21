@@ -2,7 +2,6 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTextBrowser, QFrame, QHBoxLayout
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPalette
 
 def _card(title_html: str, body_widget: QWidget) -> QFrame:
     card = QFrame()
