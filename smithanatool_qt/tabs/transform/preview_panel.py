@@ -10,7 +10,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QScrollArea, QSizePolicy, QStyle, QFrame
+    QScrollArea, QSizePolicy, QStyle, QFrame, QFileDialog, QMessageBox
 )
 
 # -----------------------------------------
@@ -350,8 +350,60 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self._update_info_label()
 
     # ---------- Публичный API ----------
+    def discard_changes(self, path: Optional[str] = None):
+        """Вернуть картинку(и) к состоянию с диска без записи на диск."""
+        paths = [path] if path else list(self._images.keys())
+        for p in paths:
+            base = self._loaded_from_disk.get(p)
+            if base is not None:
+                self._images[p] = base.copy()
+                self._undo[p] = []
+                self._redo[p] = []
+                self._dirty[p] = False
+        self._update_preview_pixmap()
+        self._update_actions_enabled()
+
+    def has_unsaved_changes(self) -> bool:
+        return any(self._dirty.values())
+
+    def _on_save(self):
+        """Сохранить в исходный файл."""
+        ok = self.save_current_overwrite()
+        if ok and self._current_path:
+            # обновляем базу и сбрасываем флаг грязности
+            self._loaded_from_disk[self._current_path] = self._images[self._current_path].copy()
+            self._dirty[self._current_path] = False
+
+    def _on_save_as(self):
+        """Сохранить как… (без добавления в галерею и без смены текущего файла)."""
+        if not (self._current_path and self._current_path in self._images):
+            return
+
+        # Предложим текущее имя как базовое
+        start_path = self._current_path
+
+        # Открываем диалог ОДИН раз
+        target, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить как…",
+            start_path,
+            "Изображения (*.png *.jpg *.jpeg *.bmp *.webp);;Все файлы (*.*)"
+        )
+        if not target:
+            return
+
+        # Пишем на диск из текущего изображения
+        ok = self.save_current_as(target)
+        if not ok:
+            # По желанию покажи ошибку
+            # QMessageBox.warning(self, "Сохранение", "Не удалось сохранить файл.")
+            return
+
+
     def show_path(self, path: Optional[str]):
         self._current_path = path
+        self._dirty: Dict[str, bool] = {}  # путь -> есть несохранённые правки
+        self._loaded_from_disk: Dict[str, QImage] = {}
         self._clear_selection()
         if not path:
             self.label.setText("Предпросмотр")
@@ -367,6 +419,8 @@ class PreviewPanel(SliceModeMixin, QWidget):
             if qimg.format() == QImage.Format_Indexed8:
                 qimg = qimg.convertToFormat(QImage.Format_RGB32)
             self._images[path] = qimg
+            self._loaded_from_disk[path] = qimg.copy()  # базовый снимок (как было на диске)
+            self._dirty[path] = False
         self._update_preview_pixmap()
 
     def save_current_overwrite(self) -> bool:
@@ -731,6 +785,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         p.end()
 
         self._images[self._current_path] = new_img
+        self._dirty[self._current_path] = True
         self._clear_selection()
         self._update_preview_pixmap()
         self._update_actions_enabled()
@@ -762,6 +817,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         p.end()
 
         self._images[self._current_path] = new_img
+        self._dirty[self._current_path] = True
         self._update_preview_pixmap()
         self._update_actions_enabled()
 

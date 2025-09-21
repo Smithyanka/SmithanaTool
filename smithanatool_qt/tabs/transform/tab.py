@@ -39,16 +39,12 @@ class TransformTab(QWidget):
             QMessageBox.warning(self, "Ошибка", "Не удалось сохранить изображение.")
 
     def _save_as(self):
-        # Сохранить как новый файл + добавить в галерею
-        path, _ = dialogs.ask_save_file(self, "Сохранить изображение как", "PNG (*.png);;JPEG (*.jpg *.jpeg);;Все файлы (*.*)")
+        path, _ = dialogs.ask_save_file(self, "Сохранить изображение как",
+                                        "PNG (*.png);;JPEG (*.jpg *.jpeg);;Все файлы (*.*)")
         if not path:
             return
         if self.preview.save_current_as(path):
-            # Добавим новый файл в галерею, если его там нет
-            try:
-                self.gallery.add_file(path, select=True)
-            except Exception:
-                pass
             QMessageBox.information(self, "Сохранено", f"Сохранено: {path}")
         else:
             QMessageBox.warning(self, "Ошибка", "Не удалось сохранить изображение.")
+

@@ -11,6 +11,7 @@ from smithanatool_qt.tabs.transform import TransformTab
 from smithanatool_qt.tabs.parser_manhwa_tab import ParserManhwaTab
 from smithanatool_qt.tabs.parser_novel_tab import ParserNovelTab
 from smithanatool_qt.tabs.info_tab import InfoTab
+from smithanatool_qt.tabs.transform.preview_panel import PreviewPanel
 from smithanatool_qt.settings_bind import restore_window_geometry, save_window_geometry
 
 
@@ -406,9 +407,18 @@ class MainWindow(QMainWindow):
         if hasattr(current, "can_close") and not current.can_close():
             e.ignore()
             return
+
+        try:
+            for p in self.findChildren(PreviewPanel):
+                if hasattr(p, "discard_changes"):
+                    p.discard_changes()
+        except Exception:
+            pass
+
         try:
             save_window_geometry(self)
         except Exception:
             pass
+
         super().closeEvent(e)
 
