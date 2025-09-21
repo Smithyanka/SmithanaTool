@@ -6,10 +6,16 @@ from PySide6.QtGui import QIcon, QActionGroup
 import sys
 from pathlib import Path
 
+
+from smithanatool_qt.tabs.transform import TransformTab
+from smithanatool_qt.tabs.parser_manhwa_tab import ParserManhwaTab
+from smithanatool_qt.tabs.parser_novel_tab import ParserNovelTab
+from smithanatool_qt.tabs.info_tab import InfoTab
+
 from smithanatool_qt.tabs.transform.preview_panel import PreviewPanel
 from smithanatool_qt.settings_bind import restore_window_geometry, save_window_geometry
 from smithanatool_qt.theme import apply_dark_theme, apply_light_theme
-
+from PySide6.QtWidgets import QApplication
 
 
 _BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))  # для ресурсов (иконка и пр.)
@@ -218,9 +224,7 @@ class MainWindow(QMainWindow):
         s.sync()
 
     def _apply_theme(self, theme: str):
-        from PySide6.QtWidgets import QApplication
-        app = QApplication.instance()
-        from PySide6.QtWidgets import QApplication
+
         app = QApplication.instance()
         g = self.saveGeometry()
         try:
