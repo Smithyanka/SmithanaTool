@@ -1,18 +1,14 @@
 
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QStatusBar, QStyleFactory, QApplication
-from PySide6.QtCore import Qt, QSettings, QTimer
-from PySide6.QtGui import QIcon, QColor, QActionGroup, QPalette
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QStatusBar, QApplication
+from PySide6.QtCore import Qt, QSettings
+from PySide6.QtGui import QIcon, QActionGroup
 
 import sys
-import importlib
 from pathlib import Path
 
-from smithanatool_qt.tabs.transform import TransformTab
-from smithanatool_qt.tabs.parser_manhwa_tab import ParserManhwaTab
-from smithanatool_qt.tabs.parser_novel_tab import ParserNovelTab
-from smithanatool_qt.tabs.info_tab import InfoTab
 from smithanatool_qt.tabs.transform.preview_panel import PreviewPanel
 from smithanatool_qt.settings_bind import restore_window_geometry, save_window_geometry
+from smithanatool_qt.theme import apply_dark_theme, apply_light_theme
 
 
 
@@ -224,57 +220,15 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, theme: str):
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
         g = self.saveGeometry()
         try:
             if theme == "dark":
-                QApplication.setStyle("Fusion")
-                dark = QPalette()
-                dark.setColor(QPalette.Window, QColor(53, 53, 53))
-                dark.setColor(QPalette.WindowText, QColor(220, 220, 220))
-                dark.setColor(QPalette.Base, QColor(35, 35, 35))
-                dark.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-                dark.setColor(QPalette.Text, QColor(220, 220, 220))
-                dark.setColor(QPalette.Button, QColor(53, 53, 53))
-                dark.setColor(QPalette.ButtonText, QColor(220, 220, 220))
-                dark.setColor(QPalette.Highlight, QColor(42, 130, 218))
-                dark.setColor(QPalette.HighlightedText, QColor(0, 0, 0))
-
-                # --- подчёркиваем неактивные (disabled) элементы в тёмной теме ---
-                dim_txt = QColor(140, 140, 140)  # тусклый текст
-                dim_bg = QColor(45, 45, 45)  # слегка светлее Base
-                dim_base = QColor(50, 50, 50)  # фон полей ввода (disabled)
-
-                # Текстовые роли (подписи, текст на кнопках, в полях и т.п.)
-                dark.setColor(QPalette.Disabled, QPalette.WindowText, dim_txt)
-                dark.setColor(QPalette.Disabled, QPalette.Text, dim_txt)
-                dark.setColor(QPalette.Disabled, QPalette.ButtonText, dim_txt)
-                dark.setColor(QPalette.Disabled, QPalette.ToolTipText, dim_txt)
-                dark.setColor(QPalette.Disabled, QPalette.HighlightedText, dim_txt)
-
-                # Фоны
-                dark.setColor(QPalette.Disabled, QPalette.Window, dim_bg)
-                dark.setColor(QPalette.Disabled, QPalette.Base, dim_base)
-                dark.setColor(QPalette.Disabled, QPalette.AlternateBase, dim_bg)
-                dark.setColor(QPalette.Disabled, QPalette.Button, dim_bg)
-
-                # Акцент и ссылка тоже приглушённые
-                dark.setColor(QPalette.Disabled, QPalette.Highlight, QColor(70, 70, 70))
-                dark.setColor(QPalette.Disabled, QPalette.Link, QColor(120, 160, 200))
-
-                QApplication.setPalette(dark)
-                app.setStyleSheet("")
-                # лёгкая «переполировка» — заставит стиль переложиться
-                app.setStyle(app.style().objectName())
+                apply_dark_theme(app)
                 return
-
-            # ---- LIGHT: полный откат к штатным значениям ----
-            QApplication.setStyle(self._default_style_name)
-            QApplication.setPalette(QPalette())
-            app.setStyleSheet("")
-
-
-            # переполировка, чтобы виджеты гарантированно перечитали палитру
-            app.setStyle(app.style().objectName())
+            # LIGHT
+            apply_light_theme(app, self._default_style_name)
         finally:
             self.restoreGeometry(g)
 
