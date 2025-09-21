@@ -95,11 +95,17 @@ class InfoTab(QWidget):
 
 
         # --- Контакты внизу по центру ---
+        version_label = QLabel(
+            '<div style="text-align:center; font-size:14px; color:#6b7280;">v1.0.1</div>'
+        )
+        version_label.setAlignment(Qt.AlignCenter)
+        root.addWidget(version_label)
+
 
         # --- Подзаголовок (ссылка на GitHub) ---
         update_label = QLabel(
             '<div style="text-align:center; font-size:18px;">'
-            '<a href="https://github.com/Smithyanka/SmithanaToolGit/releases" style="color:#1E88E5; text-decoration:none;">Проверить обновления (github)</a>'
+            '<a href="https://github.com/Smithyanka/SmithanaToolGit/releases" style="color:#1E88E5; text-decoration:none;">Проверить обновления</a>'
             '</div>'
         )
         update_label.setOpenExternalLinks(True)
