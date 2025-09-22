@@ -392,7 +392,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
             frag = img.copy(0, y1, w, cut_h)  # локальная копия для потока
             # имена вида: <basename>_s01.png
             base = os.path.splitext(os.path.basename(self._current_path))[0]
-            dst = os.path.join(out_dir, f"{base}_s{str(i+1).zfill(2)}.png")
+            dst = os.path.join(out_dir, f"{base}_{str(i+1).zfill(2)}.png")
             return bool(frag.save(dst))
 
         with ThreadPoolExecutor(max_workers=int(threads)) as ex:
