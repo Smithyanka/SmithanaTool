@@ -3,7 +3,7 @@ from typing import Optional, Dict, List, Tuple
 from pathlib import Path
 from .preview.slice_mode import SliceModeMixin
 
-from PySide6.QtCore import Qt, QSize, QPoint, QRect
+from PySide6.QtCore import Qt, QSize, QPoint, QPointF, QRect
 from PySide6.QtGui import (
     QPixmap, QImage, QPainter, QColor, QPen,
     QShortcut, QKeySequence
@@ -12,6 +12,10 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QScrollArea, QSizePolicy, QStyle, QFrame, QFileDialog, QMessageBox
 )
+
+from psd_tools import PSDImage
+from PIL import Image
+import numpy as np
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
@@ -26,7 +30,7 @@ class _PanZoomLabel(QLabel):
         self._owner = owner
         self._scroll: Optional[QScrollArea] = None
         self._panning = False
-        self._pan_start = QPoint()
+        self._pan_start = QPointF()
         self._hbar0 = 0
         self._vbar0 = 0
         self.setMouseTracking(True)
@@ -54,14 +58,18 @@ class _PanZoomLabel(QLabel):
     def mousePressEvent(self, e):
         # Пан/Зум ЛКМ/МКМ как раньше
         if e.button() in (Qt.LeftButton, Qt.MiddleButton):
-            # Панорамирование
+            # при первом драге отключаем fit для нормального панорамирования
+            if self._owner._fit_to_window:
+                self._owner._set_fit(False)
+
             self._panning = True
             self.setCursor(Qt.ClosedHandCursor)
-            self._pan_start = e.position().toPoint()
+            self._pan_start = e.globalPosition()  # глобальные координаты
+            e.accept()
             if self._scroll:
                 self._hbar0 = self._scroll.horizontalScrollBar().value()
                 self._vbar0 = self._scroll.verticalScrollBar().value()
-            e.accept()
+            return
         elif e.button() == Qt.RightButton:
             if self._owner._slice_enabled:
                 idx = self._owner._boundary_under_cursor(e.position().toPoint())
@@ -82,10 +90,18 @@ class _PanZoomLabel(QLabel):
 
     def mouseMoveEvent(self, e):
         if self._panning and self._scroll:
-            delta = e.position().toPoint() - self._pan_start
-            self._scroll.horizontalScrollBar().setValue(self._hbar0 - delta.x())
-            self._scroll.verticalScrollBar().setValue(self._vbar0 - delta.y())
+            hbar = self._scroll.horizontalScrollBar()
+            vbar = self._scroll.verticalScrollBar()
+
+            # инкрементальная дельта в глобальных координатах экрана
+            delta = e.globalPosition() - self._pan_start
+            hbar.setValue(hbar.value() - int(delta.x()))
+            vbar.setValue(vbar.value() - int(delta.y()))
+
+            # "схватываем" текущую точку как новую базу
+            self._pan_start = e.globalPosition()
             e.accept()
+            return
         elif self._owner._slice_enabled and self._owner._drag_boundary_index:
             self._owner._drag_boundary_to(e.position().toPoint()); e.accept()
         elif self._owner._sel_active:
@@ -106,6 +122,7 @@ class _PanZoomLabel(QLabel):
             self._panning = False
             self.setCursor(Qt.ArrowCursor)
             e.accept()
+            return
         elif e.button() == Qt.RightButton:
             if self._owner._slice_enabled:
                 self._owner._drag_boundary_index = None
@@ -215,7 +232,15 @@ class _PanZoomLabel(QLabel):
                 p.drawLine(x0, y0 + y2, x0 + w, y0 + y2)
             p.end()
 
-
+def _qimage_from_pil(pil_img: Image.Image) -> QImage:
+    if pil_img.mode not in ("RGBA", "RGB"):
+        pil_img = pil_img.convert("RGBA")
+    if pil_img.mode == "RGB":
+        pil_img = pil_img.convert("RGBA")
+    w, h = pil_img.size
+    buf = pil_img.tobytes("raw", "RGBA")
+    qimg = QImage(buf, w, h, 4 * w, QImage.Format_RGBA8888)
+    return qimg.copy()
 # -----------------------------------------
 # Основная панель предпросмотра
 # -----------------------------------------
@@ -353,6 +378,9 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self._update_info_label()
 
     # ---------- Публичный API ----------
+    def _is_current_psd(self) -> bool:
+        return bool(self._current_path and os.path.splitext(self._current_path)[1].lower() == ".psd")
+
     def set_slice_mode(self, on: bool, count: Optional[int] = None):
         self._slice_enabled = bool(on)
         if count is not None:
@@ -499,6 +527,9 @@ class PreviewPanel(SliceModeMixin, QWidget):
 
     def _on_save(self):
         """Сохранить в исходный файл."""
+        if self._is_current_psd():
+            QMessageBox.information(self, "Сохранение недоступно", "Для сохранения перейдите в секцию конвертации.")
+            return
         ok = self.save_current_overwrite()
         if ok and self._current_path:
             # обновляем базу и сбрасываем флаг грязности
@@ -509,6 +540,9 @@ class PreviewPanel(SliceModeMixin, QWidget):
         """Сохранить как… (без добавления в галерею и без смены текущего файла)."""
         if not (self._current_path and self._current_path in self._images):
             return
+        if self._is_current_psd():
+            QMessageBox.information(self, "Сохранение недоступно","Для сохранения перейдите в секцию конвертации.")
+        return
 
         # Предложим текущее имя как базовое
         start_path = self._current_path
@@ -530,38 +564,70 @@ class PreviewPanel(SliceModeMixin, QWidget):
             # QMessageBox.warning(self, "Сохранение", "Не удалось сохранить файл.")
             return
 
-
     def show_path(self, path: Optional[str]):
         self._current_path = path
-        self._dirty: Dict[str, bool] = {}  # путь -> есть несохранённые правки
-        self._loaded_from_disk: Dict[str, QImage] = {}
         self._clear_selection()
+
         if not path:
             self.label.setText("Предпросмотр")
             self._update_info_label()
             return
+
+        # всегда объявляем qimg
+        qimg: QImage | None = None
+
+        # пробуем взять из кэша
         img = self._images.get(path)
-        if img is None:
-            qimg = QImage(path)
-            if qimg.isNull():
-                self.label.setText("Не удалось открыть изображение")
-                self._update_info_label()
-                return
-            if qimg.format() == QImage.Format_Indexed8:
-                qimg = qimg.convertToFormat(QImage.Format_RGB32)
-            self._images[path] = qimg
-            self._loaded_from_disk[path] = qimg.copy()  # базовый снимок (как было на диске)
-            self._dirty[path] = False
+        if img is not None:
+            qimg = img
+        else:
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".psd":
+                try:
+                    psd = PSDImage.open(path)
+                    pil = psd.composite()  # сводный вид всех видимых слоёв
+                    qimg = _qimage_from_pil(pil)
+                except Exception:
+                    self.label.setText("Не удалось открыть PSD")
+                    self._update_info_label()
+                    return
+            else:
+                qimg = QImage(path)
+                if qimg.isNull():
+                    self.label.setText("Не удалось открыть изображение")
+                    self._update_info_label()
+                    return
+
+        # нормализуем формат, если надо
+        if qimg.format() == QImage.Format_Indexed8:
+            qimg = qimg.convertToFormat(QImage.Format_RGB32)
+
+        # обновляем кэши/флаги только для текущего пути
+        self._images[path] = qimg
+        if not hasattr(self, "_loaded_from_disk"):
+            self._loaded_from_disk: Dict[str, QImage] = {}
+        if not hasattr(self, "_dirty"):
+            self._dirty: Dict[str, bool] = {}
+
+        self._loaded_from_disk.setdefault(path, qimg.copy())
+        self._dirty.setdefault(path, False)
+
         self._update_preview_pixmap()
 
     def save_current_overwrite(self) -> bool:
         if not self._current_path or self._current_path not in self._images:
+            return False
+        # PSD вообще нельзя сохранять
+        if self._is_current_psd():
             return False
         ok = self._images[self._current_path].save(self._current_path)
         return bool(ok)
 
     def save_current_as(self, target_path: str) -> bool:
         if not self._current_path or self._current_path not in self._images:
+            return False
+        # PSD вообще нельзя сохранять
+        if self._is_current_psd():
             return False
         ok = self._images[self._current_path].save(target_path)
         return bool(ok)
@@ -978,12 +1044,17 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self._images[self._current_path] = nxt
         self._update_preview_pixmap()
         self._update_actions_enabled()
+        self._update_actions_enabled()
 
     
     def _update_actions_enabled(self):
         has_img = self._current_path in self._images if self._current_path else False
+        is_psd = self._is_current_psd()
         self.btn_cut.setEnabled(has_img and self._has_selection())
         self.btn_paste_top.setEnabled(has_img and bool(self._clip))
         self.btn_paste_bottom.setEnabled(has_img and bool(self._clip))
         self.btn_undo.setEnabled(has_img and bool(self._undo.get(self._current_path, [])))
         self.btn_redo.setEnabled(has_img and bool(self._redo.get(self._current_path, [])))
+        # Сохранение недоступно для PSD
+        self.btn_save.setEnabled(has_img and not is_psd and bool(self._dirty.get(self._current_path, False)))
+        self.btn_save_as.setEnabled(has_img and not is_psd)

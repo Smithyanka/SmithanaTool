@@ -14,7 +14,7 @@ from .converters.psd_png import filter_psd, convert_psd_to_png
 from smithanatool_qt.settings_bind import (
     group, bind_spinbox, bind_checkbox, save_attr_string
 )
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def _open_in_explorer(path: str):
     try:
@@ -57,8 +57,13 @@ class ConversionsPanel(QWidget):
 
         self.psd_compress = QSpinBox(); self.psd_compress.setRange(0, 9); self.psd_compress.setValue(7); row_s2.addWidget(self.psd_compress); row_s2.addStretch(1); s.addLayout(row_s2)
 
-
-        row_s3 = QHBoxLayout(); row_s3.addStretch(1); self.btn_psd_pick = QPushButton("Выбрать файлы PSD → PNG"); row_s3.addWidget(self.btn_psd_pick); s.addLayout(row_s3)
+        row_s3 = QHBoxLayout()
+        row_s3.addStretch(1)
+        self.btn_psd_convert_sel = QPushButton("Преобразовать выделенные")
+        self.btn_psd_pick = QPushButton("Выбрать файлы...")
+        row_s3.addWidget(self.btn_psd_convert_sel)
+        row_s3.addWidget(self.btn_psd_pick)
+        s.addLayout(row_s3)
 
 
         # Примечение
@@ -81,6 +86,7 @@ class ConversionsPanel(QWidget):
         self.btn_gif_convert_sel.clicked.connect(self._gif_convert_selected); self.btn_gif_convert_pick.clicked.connect(self._gif_convert_pick)
         self.btn_pdf_convert_sel.clicked.connect(self._pdf_convert_selected); self.btn_pdf_convert_pick.clicked.connect(self._pdf_convert_pick)
         self.btn_psd_pick.clicked.connect(self._psd_pick_convert)
+        self.btn_psd_convert_sel.clicked.connect(self._psd_convert_selected)
 
         # --- persist changes to INI ---
         self.gif_dither.toggled.connect(lambda v: self._save_bool_ini("gif_dither", v))
@@ -252,6 +258,22 @@ class ConversionsPanel(QWidget):
         else: QMessageBox.critical(self, "PNG→PDF", f"Ошибка: {msg}")
 
     # PSD
+
+    def _psd_convert_selected(self):
+        files = self._selected_from_gallery(filter_psd)
+        if not files:
+            QMessageBox.information(self, "PSD→PNG", "Нет выбранных PSD/PSB в галерее.")
+            return
+        replace = bool(self.psd_replace.isChecked())
+        threads = None if self.psd_auto_threads.isChecked() else int(self.psd_threads.value())
+        compress = int(self.psd_compress.value())
+
+        out_dir = self._ask_out_dir("Папка для PNG")
+        if not out_dir:
+            return
+
+        self._psd_convert(files, out_dir, replace, threads, compress)
+
     def _psd_pick_convert(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Выберите PSD", "", "PSD/PSB (*.psd *.psb)")
         if not files:
@@ -268,55 +290,67 @@ class ConversionsPanel(QWidget):
         self._psd_convert(files, out_dir, replace, threads, compress)
 
     def _psd_convert(self, files: list[str], out_dir: str | None, replace: bool, threads: int | None, compress: int):
-        try:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-        except Exception:
-            ThreadPoolExecutor = None
 
-        def dst_for(src: str) -> str:
-            base = os.path.splitext(os.path.basename(src))[0] + ".png"
-            return os.path.join(out_dir, base) if out_dir else (os.path.splitext(src)[0] + ".png")
-
-        # Предфильтрация: если "Заменять файлы" выключено — уже существующие PNG пропускаем
-        files_to_process = []
+        total = len(files)
         skipped = 0
+
+        # Автопотоки — как в других местах: не перегружаем диск/CPU
+        if threads is None:
+            cpu = os.cpu_count() or 4
+            threads = max(2, min(8, cpu))
+
+        os.makedirs(out_dir or ".", exist_ok=True)
+
+        def _dst_path(dst: str) -> str | None:
+            if replace or not os.path.exists(dst):
+                return dst
+            return None
+
+        tasks = []
         for src in files:
-            dst = dst_for(src)
-            if (not replace) and os.path.exists(dst):
+            base = os.path.splitext(os.path.basename(src))[0] + ".png"
+            dst = os.path.join(out_dir or os.path.dirname(src), base)
+
+            dst = _dst_path(dst)
+            if dst is None:
                 skipped += 1
                 continue
-            files_to_process.append((src, dst))
+            tasks.append((src, dst))
 
-        total = len(files_to_process)
-        if total == 0:
-            # Даже если всё пропущено — откроем папку, где лежат исходники или где сохраняли бы
-            folder = out_dir or os.path.dirname(files[0])
-            self._show_done_box(folder, "PSD→PNG: все файлы пропущены (PNG уже существуют).")
-            return
-
-        dlg = QProgressDialog("PSD→PNG: выполняется конвертация…", None, 0, total, self)
+        dlg = QProgressDialog("PSD→PNG: выполняется конвертация…", None, 0, len(tasks), self)
         dlg.setWindowTitle("Конвертация")
-        dlg.setWindowModality(Qt.ApplicationModal); dlg.setCancelButton(None); dlg.setMinimumDuration(0); dlg.show()
+        dlg.setWindowModality(Qt.ApplicationModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.show();
         QApplication.processEvents()
 
         ok = 0
-        if ThreadPoolExecutor and (threads is None or threads > 1):
-            max_workers = (os.cpu_count() or 4) if threads is None else threads
-            with ThreadPoolExecutor(max_workers=max_workers) as ex:
-                futs = [ex.submit(convert_psd_to_png, src, dst, compress, False, True) for (src, dst) in files_to_process]
-                done = 0
-                for f in as_completed(futs):
-                    done += 1
-                    success, msg = f.result()
-                    if success: ok += 1
-                    dlg.setValue(done); QApplication.processEvents()
-        else:
-            for i, (src, dst) in enumerate(files_to_process, 1):
-                success, msg = convert_psd_to_png(src, dst, compress, False, True)
-                if success: ok += 1
-                dlg.setValue(i); QApplication.processEvents()
+        errors = []
+
+        with ThreadPoolExecutor(max_workers=int(threads)) as ex:
+            futs = [ex.submit(convert_psd_to_png, src, dst, png_compress_level=compress, optimize=False,
+                              strip_metadata=True)
+                    for (src, dst) in tasks]
+            for i, fut in enumerate(as_completed(futs), 1):
+                try:
+                    success, msg = fut.result()
+                    if success:
+                        ok += 1
+                    else:
+                        errors.append(msg)
+                except Exception as e:
+                    errors.append(str(e))
+                dlg.setValue(i);
+                QApplication.processEvents()
 
         dlg.close()
-        # Явно открываем папку в ОБОИХ режимах: при замене (рядом с PSD) и при сохранении в выбранную папку
-        folder = out_dir or os.path.dirname(files[0])
-        self._show_done_box(folder, f"PSD→PNG: успешно {ok}/{total}, пропущено {skipped}")
+        self._show_done_box(
+            out_dir or os.path.dirname(files[0]),
+            f"PSD→PNG: успешно {ok}/{total}, пропущено {skipped}"
+        )
+        if errors:
+            # Покажем первые несколько ошибок, чтобы не заспамить
+            err_text = "\n".join(list(dict.fromkeys(errors))[:5])
+            QMessageBox.warning(self, "PSD→PNG", f"Некоторые файлы не сконвертированы:\n{err_text}")
+

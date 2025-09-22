@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os, re
 
-SUPPORTED_EXT = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp'}
+SUPPORTED_EXT = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', ".psd", ".psb"}
 
 def natural_key(path: str):
     """Естественная сортировка по имени файла (учитывает числа)."""

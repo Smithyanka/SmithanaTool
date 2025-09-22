@@ -201,7 +201,7 @@ class GalleryPanel(QWidget):
     def _open_files(self):
         files, _ = dialogs.ask_open_files(
             self, "Выберите файлы",
-            "Изображения (*.png *.jpg *.jpeg *.gif *.bmp *.webp);;Все файлы (*.*)"
+            "Изображения (*.png *.jpg *.jpeg *.gif *.bmp *.webp *.psd *.psb);;Все файлы (*.*)"
         )
         if files:
             self._files = dedup_keep_order(self._files + files)
@@ -220,7 +220,7 @@ class GalleryPanel(QWidget):
         imgs = [p for p in entries if is_image(p)]
         if imgs:
             self._files = dedup_keep_order(self._files + imgs)
-            self._remember_added(paths)
+            self._remember_added(imgs)
             self._apply_sort(refresh=True)
             self.filesChanged.emit(self.files())
 
@@ -251,6 +251,7 @@ class GalleryPanel(QWidget):
                 paths.append(p)
         if paths:
             self._files = dedup_keep_order(self._files + paths)
+            self._remember_added(paths)
             self._apply_sort(refresh=True)
             self.filesChanged.emit(self.files())
 
@@ -296,8 +297,9 @@ class GalleryPanel(QWidget):
         act_add_files = menu.addAction("Добавить файлы…")
         act_add_folder = menu.addAction("Открыть папку…")
         menu.addSeparator()
-        act_remove = menu.addAction("Удалить выбранные")
         act_open_dir = menu.addAction("Открыть в проводнике")
+        act_remove = menu.addAction("Удалить выбранные")
+
 
         act = menu.exec_(self.list.mapToGlobal(pos))
         if act == act_add_files:

@@ -29,7 +29,10 @@ def _load_psd_flatten(path: str) -> Image.Image | None:
         try:
             psd = PSDImage.open(path)
             try:
-                im = psd.composite(apply_icc=False)
+                try:
+                    im = psd.composite(apply_icc=True)
+                except Exception:
+                    im = psd.composite(apply_icc=False)
             except Exception:
                 im = None
 
@@ -45,20 +48,21 @@ def _load_psd_flatten(path: str) -> Image.Image | None:
                     canvas = None
                     for l in visible:
                         li = None
-                        try:
-                            li = l.composite(apply_icc=False)
-                        except Exception:
+                        for fn in (
+                                lambda: l.composite(apply_icc=True),
+                                lambda: l.composite(apply_icc=False),
+                                lambda: l.topil(apply_icc=True),
+                                lambda: l.topil(apply_icc=False),
+                        ):
                             try:
-                                li = l.topil(apply_icc=False)
+                                li = fn()
+                                if li is not None:
+                                    break
                             except Exception:
-                                li = None
+                                pass
                         if li is None:
                             continue
 
-                        try:
-                            li.info.pop("icc_profile", None)
-                        except Exception:
-                            pass
                         li = _to_srgb_safe(li).convert("RGBA")
 
                         if canvas is None:
@@ -79,11 +83,6 @@ def _load_psd_flatten(path: str) -> Image.Image | None:
         except Exception:
             return None
 
-    # Нормализуем профиль/режим
-    try:
-        im.info.pop("icc_profile", None)
-    except Exception:
-        pass
 
     if im.mode not in ("RGB", "RGBA", "L", "LA"):
         im = im.convert("RGBA" if "A" in im.getbands() else "RGB")
@@ -133,7 +132,7 @@ def convert_psd_to_png(
                 # вычищаем мусор, который png всё равно не использует
                 info = dict(im.info or {})
                 for k in list(info.keys()):
-                    if k.lower() in ("exif", "icc_profile", "comment", "dpi", "chunks"):
+                    if k.lower() in ("exif", "comment", "dpi", "chunks", "transparency"):
                         info.pop(k, None)
                 im.info.clear()
                 im.info.update(info)
@@ -146,6 +145,9 @@ def convert_psd_to_png(
         if im.mode not in ("RGB", "RGBA", "L", "LA"):
             im = im.convert("RGBA" if "A" in im.getbands() else "RGB")
 
+        icc = im.info.get("icc_profile")
+        if icc:
+            params["icc_profile"] = icc
         im.save(dst_path, format="PNG", **params)
         return True, dst_path
     except Exception as e:
