@@ -205,7 +205,7 @@ def handle_ticket_modal(
     rental = int(info.get("rental", 0) or 0)
     own    = int(info.get("own", 0) or 0)
     bal    = info.get("balance")
-    log(f"[INFO] Тикеты: Аренды {rental} · Владения {own}장 · баланс {bal if bal is not None else '—'} кредитов")
+    log(f"[INFO] Тикеты: Аренды {rental} · Владения {own} · баланс {bal if bal is not None else '—'} кредитов")
     # log(f"[INFO] 티켓: 대여권 {rental}장 · 소장권 {own}장 · баланс {bal if bal is not None else '—'} 캐시") # если есть 소장권
 
     # 1) Есть 대여권 — спрашиваем и жмём

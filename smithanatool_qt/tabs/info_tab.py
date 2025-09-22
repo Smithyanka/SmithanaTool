@@ -117,7 +117,7 @@ class InfoTab(QWidget):
         root.addWidget(update_label)
 
         version_label = QLabel(
-            '<div style="text-align:center; font-size:14px; color:#6b7280;">v1.0.2</div>'
+            '<div style="text-align:center; font-size:14px; color:#6b7280;">v1.0.3</div>'
         )
         version_label.setAlignment(Qt.AlignCenter)
         root.addWidget(version_label)

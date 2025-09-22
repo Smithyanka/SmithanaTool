@@ -79,6 +79,9 @@ class GalleryPanel(QWidget):
         super().__init__(parent)
         self._files: List[str] = []
 
+        self._added_seq = 0  # монотонный счётчик добавлений
+        self._added_order: dict[str, int] = {}  # path -> порядковый номер добавления
+
         v = QVBoxLayout(self)
 
         row_open = QHBoxLayout()
@@ -91,7 +94,8 @@ class GalleryPanel(QWidget):
         v.addLayout(row_open)
 
         row_sort = QHBoxLayout()
-        self.cmb_sort_field = QComboBox(); self.cmb_sort_field.addItems(["По названию", "По дате"])
+        self.cmb_sort_field = QComboBox();
+        self.cmb_sort_field.addItems(["По названию", "По дате", "По добавлению"])
         self.cmb_sort_order = QComboBox(); self.cmb_sort_order.addItems(["По возрастанию", "По убыванию"])
         row_sort.addWidget(QLabel("Сорт.:"))
         row_sort.addWidget(self.cmb_sort_field)
@@ -161,7 +165,9 @@ class GalleryPanel(QWidget):
 
     def set_files(self, paths: List[str], sort_refresh=True):
         self._files = [p for p in paths if is_image(p)]
+        self._remember_added(self._files)
         if sort_refresh:
+
             self._apply_sort(refresh=True)
         else:
             self._rebuild_list()
@@ -181,6 +187,7 @@ class GalleryPanel(QWidget):
                     pass
             return
         self._files.append(path)
+        self._remember_added([path])
         self._apply_sort(refresh=False)
         if select and self.list.count():
             try:
@@ -198,6 +205,7 @@ class GalleryPanel(QWidget):
         )
         if files:
             self._files = dedup_keep_order(self._files + files)
+            self._remember_added(files)
             self._apply_sort(refresh=True)
             self.filesChanged.emit(self.files())
 
@@ -212,6 +220,7 @@ class GalleryPanel(QWidget):
         imgs = [p for p in entries if is_image(p)]
         if imgs:
             self._files = dedup_keep_order(self._files + imgs)
+            self._remember_added(paths)
             self._apply_sort(refresh=True)
             self.filesChanged.emit(self.files())
 
@@ -284,15 +293,28 @@ class GalleryPanel(QWidget):
     def _show_list_menu(self, pos: QPoint):
         item = self.list.itemAt(pos)
         menu = QMenu(self)
+        act_add_files = menu.addAction("Добавить файлы…")
+        act_add_folder = menu.addAction("Открыть папку…")
+        menu.addSeparator()
         act_remove = menu.addAction("Удалить выбранные")
         act_open_dir = menu.addAction("Открыть в проводнике")
+
         act = menu.exec_(self.list.mapToGlobal(pos))
-        if act == act_remove:
+        if act == act_add_files:
+            self._open_files()
+        elif act == act_add_folder:
+            self._open_folder()
+        elif act == act_remove:
             self._delete_selected()
-        elif act == act_open_dir and item:
-            full_path = item.data(Qt.UserRole)
-            folder = os.path.dirname(full_path)
-            open_in_explorer(folder)
+        elif act == act_open_dir:
+            folder = None
+            if item:
+                full_path = item.data(Qt.UserRole)
+                folder = os.path.dirname(full_path)
+            elif self._files:
+                folder = os.path.dirname(self._files[0])
+            if folder:
+                open_in_explorer(folder)
 
     # ---------- Операции выбора ----------
     def _get_selected_mask(self):
@@ -304,18 +326,31 @@ class GalleryPanel(QWidget):
 
     def _delete_selected(self):
         rows = sorted({self.list.row(i) for i in self.list.selectedItems()}, reverse=True)
+        removed_paths = []
         for r in rows:
             if 0 <= r < len(self._files):
+                removed_paths.append(self._files[r])
                 self._files.pop(r)
                 self.list.takeItem(r)
+        for p in removed_paths:
+            self._added_order.pop(p, None)
         self._sync_files_from_list()
 
     def _clear_all(self):
         self._files.clear()
+        self._added_order.clear()
         self._rebuild_list()
         self.filesChanged.emit(self.files())
 
     # ---------- Сортировка ----------
+
+    def _remember_added(self, paths: list[str]):
+        # регистрируем порядок добавления только для новых путей
+        for p in paths:
+            if p not in self._added_order:
+                self._added_seq += 1
+                self._added_order[p] = self._added_seq
+
     def _apply_sort(self, refresh=False):
         if not self._files:
             return
@@ -329,9 +364,13 @@ class GalleryPanel(QWidget):
         reverse = (order == "По убыванию")
 
         if field == "По названию":
-            self._files.sort(key=natural_key, reverse=reverse)
+            key_fn = natural_key
+        elif field == "По добавлению":
+            key_fn = lambda p: self._added_order.get(p, float("inf"))
         else:
-            self._files.sort(key=mtime_key, reverse=reverse)
+            key_fn = mtime_key
+
+        self._files.sort(key=key_fn, reverse=reverse)
 
         self._rebuild_list()
         if refresh and self._files:

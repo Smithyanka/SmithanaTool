@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from smithanatool_qt.parsers.kakao.core import run_parser
 from typing import Optional
-
+import os
 
 @dataclass
 class ParserConfig:
@@ -28,8 +28,10 @@ class ParserConfig:
     compress_level: int = 6
     strip_metadata: bool = True
     per: int = 12
-    auto_confirm_purchase: bool = False  # автопокупка без вопросов
-    auto_confirm_use_rental: bool = False  # авто-использование 대여권
+    auto_confirm_purchase: bool = False
+    auto_confirm_use_rental: bool = False
+    auto_threads: bool = True
+    threads: int = max(2, (os.cpu_count() or 4) // 2)
 
 class ManhwaParserWorker(QObject):
     log = Signal(str)
@@ -126,6 +128,8 @@ class ManhwaParserWorker(QObject):
             "compress_level": int(self.cfg.compress_level),
             "delete_sources": bool(self.cfg.delete_sources),
             "enable": True,
+            "auto_threads": bool(self.cfg.auto_threads),
+            "threads": int(self.cfg.threads),
         }
 
     def _is_browser_closed_logline(self, s: str) -> bool:

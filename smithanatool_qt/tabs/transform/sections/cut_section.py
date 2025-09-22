@@ -43,6 +43,24 @@ class CutSection(QWidget):
         row1b.addStretch(1)
         v.addLayout(row1b)
 
+        row_threads = QHBoxLayout()
+        self.chk_auto_threads = QCheckBox("Авто потоки")
+        self.chk_auto_threads.setChecked(True)
+        self.spin_threads = QSpinBox();
+        self.spin_threads.setRange(1, 64);
+        self.spin_threads.setValue(6)
+        self.spin_threads.setEnabled(False)
+        row_threads.addWidget(self.chk_auto_threads)
+        row_threads.addWidget(QLabel("Потоки:"))
+        row_threads.addWidget(self.spin_threads)
+        row_threads.addStretch(1)
+        v.addLayout(row_threads)
+
+        # биндинги и включение/выключение поля
+        self.chk_auto_threads.toggled.connect(lambda on: self.spin_threads.setEnabled(not on))
+        self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini("auto_threads", v))
+        self.spin_threads.valueChanged.connect(lambda v: self._save_int_ini("threads", v))
+
         # ---- строка с одной кнопкой-переключателем
         row2 = QHBoxLayout(); row2.addStretch(1)
         self.btn_toggle = QPushButton("Вкл")
@@ -89,17 +107,47 @@ class CutSection(QWidget):
         defaults = dict(
             slices=8,
             show_labels=True,
+            auto_threads=True,
+            threads=6,
         )
+
+        # временно снимаем сигналы, чтобы не сработали биндинги сохранения
+        try:
+            if hasattr(self, "chk_auto_threads"):
+                self.chk_auto_threads.toggled.disconnect()
+            if hasattr(self, "spin_threads"):
+                self.spin_threads.valueChanged.disconnect()
+        except Exception:
+            pass
+
         if hasattr(self, "spin_slices"):
             self.spin_slices.setValue(defaults["slices"])
         if hasattr(self, "chk_show_labels"):
             self.chk_show_labels.setChecked(defaults["show_labels"])
 
+        if hasattr(self, "chk_auto_threads"):
+            self.chk_auto_threads.setChecked(defaults["auto_threads"])
+        if hasattr(self, "spin_threads"):
+            self.spin_threads.setValue(defaults["threads"])
+            # включаем/выключаем в соответствии с авто-режимом
+            self.spin_threads.setEnabled(not defaults["auto_threads"])
+
         # сохранить в INI
         self._save_int_ini("slices", defaults["slices"])
         self._save_bool_ini("show_labels", defaults["show_labels"])
+        self._save_bool_ini("auto_threads", defaults["auto_threads"])
+        self._save_int_ini("threads", defaults["threads"])
 
-        # возможно нужно обновить предпросмотр
+        try:
+            if hasattr(self, "chk_auto_threads"):
+                self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini("auto_threads", v))
+                # чтобы UI сразу блокировал/разблокировал спин:
+                self.chk_auto_threads.toggled.connect(lambda on: self.spin_threads.setEnabled(not on))
+            if hasattr(self, "spin_threads"):
+                self.spin_threads.valueChanged.connect(lambda v: self._save_int_ini("threads", v))
+        except Exception:
+            pass
+
         try:
             if hasattr(self, "_on_count_changed"):
                 self._on_count_changed(defaults["slices"])
@@ -149,25 +197,35 @@ class CutSection(QWidget):
         if not self._preview: return
         self._preview.set_slice_mode(False)
 
-
     def _save(self):
         if not self._preview or not getattr(self._preview, "_slice_enabled", False):
             QMessageBox.warning(self, "Нарезка", "Сначала включите режим нарезки (Вкл).")
             return
         out_dir = QFileDialog.getExistingDirectory(self, "Папка для сохранения фрагментов")
         if not out_dir: return
+
+        auto_threads = bool(self.chk_auto_threads.isChecked())
+        threads = int(self.spin_threads.value())
+
         dlg = QProgressDialog("Сохраняю фрагменты…", None, 0, 0, self)
-        dlg.setWindowTitle("Сохранение"); dlg.setWindowModality(Qt.ApplicationModal)
-        dlg.setCancelButton(None); dlg.setMinimumDuration(0); dlg.show()
+        dlg.setWindowTitle("Сохранение");
+        dlg.setWindowModality(Qt.ApplicationModal)
+        dlg.setCancelButton(None);
+        dlg.setMinimumDuration(0);
+        dlg.show()
         QApplication.processEvents()
         try:
-            count = self._preview.save_slices(out_dir)
+            # обновлённая сигнатура:
+            count = self._preview.save_slices(out_dir, threads=threads, auto_threads=auto_threads)
         finally:
             dlg.close()
         if count > 0:
-            box = QMessageBox(self); box.setWindowTitle("Готово"); box.setText(f"Сохранено фрагментов: {count}")
+            box = QMessageBox(self);
+            box.setWindowTitle("Готово");
+            box.setText(f"Сохранено фрагментов: {count}")
             btn_open = box.addButton("Открыть папку", QMessageBox.ActionRole)
-            box.addButton(QMessageBox.Ok); box.exec()
+            box.addButton(QMessageBox.Ok);
+            box.exec()
             if box.clickedButton() is btn_open: _open_in_explorer(out_dir)
         else:
             QMessageBox.information(self, "Нарезка", "Нет фрагментов для сохранения.")
@@ -177,3 +235,8 @@ class CutSection(QWidget):
         with group("CutSection"):
             bind_spinbox(self.spin_slices, "slices", 8)
             bind_checkbox(self.chk_show_labels, "show_labels", True)
+            bind_checkbox(self.chk_auto_threads, "auto_threads", True)
+            bind_spinbox(self.spin_threads, "threads", 4)
+            self.spin_threads.setEnabled(not self.chk_auto_threads.isChecked())
+
+

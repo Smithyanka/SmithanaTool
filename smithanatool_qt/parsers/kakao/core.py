@@ -163,54 +163,99 @@ def _auto_concat_chapter(ch_dir: Path, title_id: str, chapter_name: str, cfg: di
     В конце, если delete_sources=True, удаляет ВСЕ исходники главы разом.
     """
     import os
+    from concurrent.futures import ThreadPoolExecutor
     from PIL import Image
+
+    # ----- входные файлы
+    files = _list_images_sorted(ch_dir)
+    if not files:
+        log(f"[AUTO] Нет изображений для склейки: {ch_dir}")
+        return
 
     per = int(cfg.get("per", 0) or 0)
     if per < 1:
         log("[WARN] per<1 — пропуск автосклейки.")
         return
 
-    # Куда сохраняем результат
-    same_dir = bool(cfg.get("same_dir", False))
-    out_base = (Path(ch_dir) if same_dir else Path(cfg["out_dir"]) / f"kakao_{title_id}")
-    ensure_dir(out_base.as_posix())
-
-    # Список исходников
-    files = _list_images_sorted(ch_dir)
-    if not files:
-        log("[WARN] Автосклейка: в главе нет файлов.")
-        return
-
-    # Батчим по per
+    # ----- разбиение на группы
     groups = [files[i:i + per] for i in range(0, len(files), per)]
-    pad = max(2, len(str(len(groups))))
+    pad = max(2, len(str(len(groups))))  # чтобы '01', '02', ...
 
+    # ----- куда сохранять
+    same_dir = bool(cfg.get("same_dir", False))
+    out_dir = cfg.get("out_dir") or ch_dir.parent.as_posix()
+    if same_dir:
+        out_base = ch_dir
+    else:
+        out_base = Path(out_dir) / f"kakao_{title_id}"
+    out_base.mkdir(parents=True, exist_ok=True)
 
-    target_w = int(cfg.get("target_width", 0) or 0)  # 0 — не менять
-    strip = bool(cfg.get("strip_metadata", True))
-    optimize = bool(cfg.get("optimize_png", True))
-    level = int(cfg.get("compress_level", 6) or 6)
+    # ----- параметры PNG / пост-обработки
+    target_w = int(cfg.get("target_width", 0) or 0)
+    strip     = bool(cfg.get("strip_metadata", True))
+    optimize  = bool(cfg.get("optimize_png", True))
+    level     = int(cfg.get("compress_level", 6) or 6)
 
-    for gi, group in enumerate(groups, start=1):
+    # ----- выбор числа потоков
+    def _resolve_workers(_cfg: dict) -> int:
+        if bool(_cfg.get("auto_threads", True)):
+            c = os.cpu_count() or 2
+            if c <= 2:   auto = 1
+            elif c <= 4: auto = 2
+            elif c <= 8: auto = 4
+            else:        auto = min(8, c - 2)  # щадим слабые ПК
+            return max(1, min(8, auto))
+        try:
+            manual = int(_cfg.get("threads", 1) or 1)
+        except Exception:
+            manual = 1
+        return max(1, min(32, manual))
+
+    workers = min(len(groups), _resolve_workers(cfg))
+    log(f"[AUTO] Автосклейка: файлов={len(files)}, групп={len(groups)}, потоки={workers}")
+
+    # ----- задача пула: склейка и сохранение одной группы
+    def _job(group_paths, out_path: Path):
         # Склейка по вертикали
-        merged = _concat_vertical(group)
+        merged = _concat_vertical(group_paths)
 
         # Изменение ширины при необходимости
         if target_w and target_w > 0 and merged.width != target_w:
             nh = int(merged.height * (target_w / merged.width))
             merged = merged.resize((target_w, nh), Image.LANCZOS)
 
-        # Имя файла: <глава>.png или <глава>-01.png, -02.png ...
-        suffix = str(gi).zfill(pad)
-        fname = f"{suffix}.png" if len(groups) > 1 else f"{chapter_name}.png"
-        out_path = out_base / fname
-
-        # Сохранение PNG
+        # Сохранение PNG (план Б при OOM)
         out_img = _strip_png(merged) if strip else merged
-        out_img.save(out_path.as_posix(), "PNG", optimize=optimize, compress_level=level)
-        log(f"[AUTO] Склейка: сохранено {out_path}")
+        try:
+            out_img.save(out_path.as_posix(), "PNG", optimize=optimize, compress_level=level)
+        except MemoryError:
+            # fallback: менее требовательные параметры
+            out_img.save(out_path.as_posix(), "PNG", optimize=False,
+                         compress_level=min(3, level if isinstance(level, int) else 3))
+        return out_path
 
-    # Удаляем все исходники главы ОДНИМ заходом (после успешной склейки всей главы)
+    # ----- запуск пула
+    futures = []
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for gi, group in enumerate(groups, start=1):
+            suffix = str(gi).zfill(pad)
+            # Имя: если групп > 1 → "01.png", иначе → "<chapter_name>.png"
+            fname = f"{suffix}.png" if len(groups) > 1 else f"{chapter_name}.png"
+            out_path = out_base / fname
+            fut = ex.submit(_job, group, out_path)
+            fut._kakao_suffix = suffix  # для логов
+            futures.append(fut)
+
+        # ожидание результатов (стабильно, без падения всей операции)
+        for fut in futures:
+            try:
+                p = fut.result()
+                log(f"[AUTO] Склейка: сохранено {p.name}")
+            except Exception as e:
+                suf = getattr(fut, "_kakao_suffix", "?")
+                log(f"[WARN] Группа {suf} пропущена: {e}")
+
+    # ----- удаление исходников после завершения
     if bool(cfg.get("delete_sources", False)):
         removed = 0
         for src in files:
@@ -221,6 +266,7 @@ def _auto_concat_chapter(ch_dir: Path, title_id: str, chapter_name: str, cfg: di
                 pass
         if removed:
             log(f"[AUTO] Удалено исходников всей главы: {removed} шт")
+
 
 
 

@@ -41,6 +41,7 @@ class ConversionsPanel(QWidget):
         # PDF
         box_pdf = QGroupBox("PNG → PDF конвертор"); p = QVBoxLayout(box_pdf)
         row_p1 = QHBoxLayout()
+
         row_p1.addWidget(QLabel("Качество JPEG:")); self.pdf_quality = QSpinBox(); self.pdf_quality.setRange(10, 100); self.pdf_quality.setValue(92); row_p1.addWidget(self.pdf_quality)
         row_p1.addSpacing(16); row_p1.addWidget(QLabel("DPI страницы:")); self.pdf_dpi = QSpinBox(); self.pdf_dpi.setRange(50, 1200); self.pdf_dpi.setValue(100); row_p1.addWidget(self.pdf_dpi)
         row_p1.addSpacing(16); self.pdf_one_file = QCheckBox("Один файл"); self.pdf_one_file.setChecked(True); row_p1.addWidget(self.pdf_one_file); row_p1.addStretch(1); p.addLayout(row_p1)
@@ -51,8 +52,28 @@ class ConversionsPanel(QWidget):
         row_s1 = QHBoxLayout(); self.psd_replace = QCheckBox("Заменять файлы"); row_s1.addWidget(self.psd_replace); row_s1.addSpacing(12)
         self.psd_auto_threads = QCheckBox("Авто потоки"); self.psd_auto_threads.setChecked(True); row_s1.addWidget(self.psd_auto_threads); row_s1.addSpacing(12)
         row_s1.addWidget(QLabel("Потоки:")); self.psd_threads = QSpinBox(); self.psd_threads.setRange(1, 8); self.psd_threads.setValue(8); row_s1.addWidget(self.psd_threads); row_s1.addStretch(1); s.addLayout(row_s1)
-        row_s2 = QHBoxLayout(); row_s2.addWidget(QLabel("Уровень сжатия PNG (0–9):")); self.psd_compress = QSpinBox(); self.psd_compress.setRange(0, 9); self.psd_compress.setValue(7); row_s2.addWidget(self.psd_compress); row_s2.addStretch(1); s.addLayout(row_s2)
+        row_s2 = QHBoxLayout(); row_s2.addWidget(QLabel("Уровень сжатия PNG (0–9):"));
+
+
+        self.psd_compress = QSpinBox(); self.psd_compress.setRange(0, 9); self.psd_compress.setValue(7); row_s2.addWidget(self.psd_compress); row_s2.addStretch(1); s.addLayout(row_s2)
+
+
         row_s3 = QHBoxLayout(); row_s3.addStretch(1); self.btn_psd_pick = QPushButton("Выбрать файлы PSD → PNG"); row_s3.addWidget(self.btn_psd_pick); s.addLayout(row_s3)
+
+
+        # Примечение
+        self.psd_note = QLabel(
+            "Примечание: При выборе 1 или 2 очень больших файлов желательно выставлять 1-2 потока."
+        )
+        self.psd_note.setWordWrap(True)
+
+
+        self.psd_note.setStyleSheet("color: #666; font-size: 12px;")
+        s.addSpacing(6)
+        s.addWidget(self.psd_note)
+
+
+
 
         v.addWidget(box_gif); v.addWidget(box_pdf); v.addWidget(box_psd); v.addStretch(1)
 
@@ -232,7 +253,7 @@ class ConversionsPanel(QWidget):
 
     # PSD
     def _psd_pick_convert(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Выберите PSD", "", "PSD (*.psd)")
+        files, _ = QFileDialog.getOpenFileNames(self, "Выберите PSD", "", "PSD/PSB (*.psd *.psb)")
         if not files:
             return
         replace = bool(self.psd_replace.isChecked())

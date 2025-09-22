@@ -14,6 +14,8 @@ from smithanatool_qt.settings_bind import (
     bind_attr_string, bind_radiobuttons, save_attr_string
 )
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 def _open_in_explorer(path: str):
     try:
         if sys.platform.startswith('win'):
@@ -29,6 +31,10 @@ class StitchSection(QWidget):
     def __init__(self, gallery=None, parent=None):
         super().__init__(parent)
         self._gallery = gallery
+
+        self._executor = ThreadPoolExecutor(
+            max_workers=max(2, min(32, (os.cpu_count() or 4) - 1))
+        )
 
         v = QVBoxLayout(self); v.setAlignment(Qt.AlignTop)
 
@@ -62,7 +68,8 @@ class StitchSection(QWidget):
         self.spin_compress.setValue(6)
         row_png1.addWidget(self.chk_opt)
         row_png1.addSpacing(12)
-        row_png1.addWidget(QLabel("Уровень сжатия (0–9):"))
+        self.lbl_compress = QLabel("Уровень сжатия (0–9):")
+        row_png1.addWidget(self.lbl_compress)
         row_png1.addWidget(self.spin_compress)
         row_png1.addStretch(1)
         v_png.addLayout(row_png1)
@@ -96,6 +103,35 @@ class StitchSection(QWidget):
         self.spin_zeros = QSpinBox(); self.spin_zeros.setRange(1, 6); self.spin_zeros.setValue(2)
         row_a1.addWidget(self.spin_zeros); row_a1.addStretch(1)
         av.addLayout(row_a1)
+
+        # ----- Потоки
+        row_a_threads = QHBoxLayout()
+        self.chk_auto_threads = QCheckBox("Авто потоки")
+        self.chk_auto_threads.setChecked(True)
+
+        self.spin_threads = QSpinBox()
+        self.spin_threads.setRange(1, 32)
+        # разумный дефолт: половина ядер, но не меньше 2
+        _default_thr = max(2, (os.cpu_count() or 4) // 2)
+        self.spin_threads.setValue(min(32, _default_thr))
+
+        # Метка и состояние
+        row_a_threads.addWidget(self.chk_auto_threads)
+        row_a_threads.addSpacing(12)
+        row_a_threads.addWidget(QLabel("Потоки:"))
+        row_a_threads.addWidget(self.spin_threads)
+        row_a_threads.addStretch(1)
+
+        # управление доступностью поля "Потоки" от чекбокса "Авто потоки"
+        def _apply_threads_state(checked: bool):
+            self.spin_threads.setEnabled(not checked)
+
+        _apply_threads_state(self.chk_auto_threads.isChecked())
+        self.chk_auto_threads.toggled.connect(_apply_threads_state)
+
+        av.addLayout(row_a_threads)
+        # ----- /Потоки
+
         row_a2 = QHBoxLayout(); row_a2.addStretch(1)
         self.btn_auto = QPushButton("Склеить выбранные")
         self.btn_auto_pick = QPushButton("Выбрать файлы…")
@@ -119,11 +155,48 @@ class StitchSection(QWidget):
         self.chk_no_resize.toggled.connect(lambda v: self._save_bool_ini("no_resize", v))
         self.spin_dim.valueChanged.connect(lambda v: self._save_int_ini("dim", v))
         self.chk_opt.toggled.connect(lambda v: self._save_bool_ini("optimize_png", v))
+        self.chk_opt.toggled.connect(self._apply_compress_state)
         self.spin_compress.valueChanged.connect(lambda v: self._save_int_ini("compress_level", v))
         self.chk_strip.toggled.connect(lambda v: self._save_bool_ini("strip_metadata", v))
         self.spin_group.valueChanged.connect(lambda v: self._save_int_ini("per", v))
         self.spin_zeros.valueChanged.connect(lambda v: self._save_int_ini("zeros", v))
+        self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini("auto_threads", v))
+        self.spin_threads.valueChanged.connect(lambda v: self._save_int_ini("threads", v))
 
+    def _apply_compress_state(self, optimize_on: bool):
+        """Вариант А: затемнить = отключить контрол уровня при включённой оптимизации."""
+        # выключаем/включаем спин и его метку
+        self.spin_compress.setEnabled(not optimize_on)
+        if hasattr(self, "lbl_compress"):
+            self.lbl_compress.setEnabled(not optimize_on)
+
+        # понятные подсказки
+        if optimize_on:
+            self.spin_compress.setToolTip(
+                "Оптимизация PNG включена — изменение уровня даёт умеренный эффект, поэтому поле отключено.")
+        else:
+            self.spin_compress.setToolTip("Уровень DEFLATE 0–9: выше — дольше и немного меньше файл.")
+
+    def _resolve_threads(self) -> int:
+        """Осторожный выбор числа потоков для слабых ПК."""
+        if getattr(self, "chk_auto_threads", None) and self.chk_auto_threads.isChecked():
+            c = os.cpu_count() or 2
+            # осторожная лестница
+            if c <= 2:
+                auto = 1
+            elif c <= 4:
+                auto = 2
+            elif c <= 8:
+                auto = 4
+            else:
+                auto = min(8, c - 2)  # чуть меньше максимума
+            return max(1, min(8, auto))
+        # ручной режим
+        try:
+            val = int(self.spin_threads.value())
+        except Exception:
+            val = 1
+        return max(1, min(32, val))
     # helpers
     def reset_to_defaults(self):
         defaults = dict(
@@ -135,6 +208,8 @@ class StitchSection(QWidget):
             strip_metadata=True,
             per=12,
             zeros=2,
+            auto_threads=True,
+            threads=max(2, (os.cpu_count() or 4) // 2),
         )
         # UI
         if hasattr(self, "cmb_dir"):
@@ -169,6 +244,8 @@ class StitchSection(QWidget):
         self._save_bool_ini("strip_metadata", defaults["strip_metadata"])
         self._save_int_ini("per", defaults["per"])
         self._save_int_ini("zeros", defaults["zeros"])
+        self._save_bool_ini("auto_threads", defaults["auto_threads"])
+        self._save_int_ini("threads", min(32, defaults["threads"]))
 
     def _apply_settings_from_ini(self):
         with group("StitchSection"):
@@ -176,15 +253,19 @@ class StitchSection(QWidget):
             bind_checkbox(self.chk_no_resize, "no_resize", True)
             bind_checkbox(self.chk_opt, "optimize_png", True)
             bind_spinbox(self.spin_compress, "compress_level", 6)
+            self._apply_compress_state(self.chk_opt.isChecked())
             bind_checkbox(self.chk_strip, "strip_metadata", True)
             bind_spinbox(self.spin_group, "per", 12)
             bind_spinbox(self.spin_zeros, "zeros", 2)
+            bind_checkbox(self.chk_auto_threads, "auto_threads", True)
+            bind_spinbox(self.spin_threads, "threads", max(2, (os.cpu_count() or 4) // 2))
             # Направление: 0 = вертикаль, 1 = горизонталь
             self.cmb_dir.setCurrentIndex(0)
             try:
                 self.cmb_dir.setCurrentIndex(int(getattr(self, "__mode_shadow", "0")))
             except Exception:
                 pass
+        self._apply_compress_state(self.chk_opt.isChecked())
 
     def _save_str_ini(self, key: str, value: str):
         try:
@@ -251,34 +332,64 @@ class StitchSection(QWidget):
 
     def _stitch_and_save_single(self, paths: List[str], direct_out_path: str | None = None):
         dlg = QProgressDialog("Сохраняю…", None, 0, 0, self)
-        dlg.setWindowTitle("Сохранение"); dlg.setWindowModality(Qt.ApplicationModal)
-        dlg.setCancelButton(None); dlg.setMinimumDuration(0); dlg.setAutoClose(False); dlg.show()
+        dlg.setWindowTitle("Сохранение");
+        dlg.setWindowModality(Qt.ApplicationModal)
+        dlg.setCancelButton(None);
+        dlg.setMinimumDuration(0);
+        dlg.setAutoClose(False);
+        dlg.show()
         QApplication.processEvents()
 
         direction, dim_val, optimize, compress, strip = self._build_output_params()
-        imgs = load_images(paths)
-        try:
-            if direction == "По вертикали":
-                img = merge_vertical(imgs, target_width=dim_val)
-            else:
-                img = merge_horizontal(imgs, target_height=dim_val)
-        except Exception as e:
-            dlg.close(); QMessageBox.critical(self, "Склейка", f"Ошибка при склейке: {e}"); return None, None
 
+        # Куда сохраняем
         if direct_out_path:
             out_path = direct_out_path
         else:
-            out_path, _ = QFileDialog.getSaveFileName(self, "Сохранить как", "01.png", "PNG (*.png)")
-            if not out_path: dlg.close(); return None, None
-            if not out_path.lower().endswith('.png'): out_path += '.png'
+            out_path, _ = QFileDialog.getSaveFileName(self, "Сохранить как", "result.png", "PNG (*.png)")
+            if not out_path:
+                dlg.close();
+                return None, None
+            if not out_path.lower().endswith(".png"):
+                out_path += ".png"
+
+        # Вынесем тяжёлую часть в отдельный поток (1 воркер тут достаточно)
+        def _job():
+            imgs = load_images(paths)
+            if not imgs:
+                raise RuntimeError("Нет валидных изображений")
+            if direction == "По вертикали":
+                merged = merge_vertical(imgs, target_width=dim_val)
+            else:
+                merged = merge_horizontal(imgs, target_height=dim_val)
+            try:
+                save_png(merged, out_path, optimize=optimize,
+                         compress_level=compress, strip_metadata=strip)
+            except MemoryError:
+                # план Б: без optimize и с пониженной компрессией
+                try:
+                    save_png(merged, out_path, optimize=False,
+                             compress_level=min(3, int(compress) if isinstance(compress, int) else 3),
+                             strip_metadata=strip)
+                except MemoryError as e:
+                    # финальный откат: последовательное сохранение (вызовем тот же код синхронно)
+                    raise RuntimeError("Недостаточно памяти для параллельной склейки") from e
+            return out_path
 
         try:
-            save_png(img, out_path, optimize=optimize, compress_level=compress, strip_metadata=strip)
+            # max_workers=1: этого хватает, мы просто не блокируем GUI
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_job)
+                while not fut.done():
+                    QApplication.processEvents()
+                result_path = fut.result()
         except Exception as e:
-            dlg.close(); QMessageBox.critical(self, "Сохранение", f"Не удалось сохранить PNG: {e}"); return None, None
+            dlg.close()
+            QMessageBox.critical(self, "Сохранение", f"Не удалось сохранить PNG: {e}")
+            return None, None
 
         dlg.close()
-        return out_path, os.path.dirname(out_path)
+        return result_path, os.path.dirname(result_path)
 
     def _do_stitch_auto(self):
         paths = self._ask_selected_paths()
@@ -303,36 +414,63 @@ class StitchSection(QWidget):
         zeros = int(self.spin_zeros.value())
         direction, dim_val, optimize, compress, strip = self._build_output_params()
 
-        total = max(1, (len(paths) + group - 1) // group)
+        # Разбиваем вход на чанки
+        chunks = [paths[i:i + group] for i in range(0, len(paths), group)]
+        total = len(chunks)
+        if total == 0:
+            return 0
+
         prog = QProgressDialog("Сохраняю…", None, 0, total, self)
-        prog.setWindowTitle("Сохранение"); prog.setWindowModality(Qt.ApplicationModal)
-        prog.setCancelButton(None); prog.setMinimumDuration(0); prog.setAutoClose(False); prog.show()
+        prog.setWindowTitle("Сохранение");
+        prog.setWindowModality(Qt.ApplicationModal)
+        prog.setCancelButton(None);
+        prog.setMinimumDuration(0);
+        prog.setAutoClose(False);
+        prog.show()
         QApplication.processEvents()
 
-        made = 0; i = 0
-        while i < len(paths):
-            chunk = paths[i:i+group]
+        workers = self._resolve_threads()
+        workers = max(1, min(workers, total))
+        made = 0
+        done = 0
+
+        def _job(chunk, out_path):
             imgs = load_images(chunk)
             if not imgs:
-                cur = min(total, (i // group) + 1); prog.setValue(cur); QApplication.processEvents(); i += group; continue
-            try:
-                if direction == "По вертикали":
-                    merged = merge_vertical(imgs, target_width=dim_val)
-                else:
-                    merged = merge_horizontal(imgs, target_height=dim_val)
-            except Exception as e:
-                QMessageBox.warning(self, "Автосклейка", f"Пропущена группа {i//group+1}: {e}")
-                cur = min(total, (i // group) + 1); prog.setValue(cur); QApplication.processEvents(); i += group; continue
+                raise RuntimeError("Нет валидных изображений")
+            if direction == "По вертикали":
+                merged = merge_vertical(imgs, target_width=dim_val)
+            else:
+                merged = merge_horizontal(imgs, target_height=dim_val)
+            save_png(merged, out_path, optimize=optimize, compress_level=compress, strip_metadata=strip)
+            return out_path
 
-            fname = f"{(i//group)+1:0{zeros}d}.png"
-            out_path = os.path.join(out_dir, fname)
-            try:
-                save_png(merged, out_path, optimize=optimize, compress_level=compress, strip_metadata=strip)
-                made += 1
-            except Exception as e:
-                QMessageBox.warning(self, "Сохранение", f"Не удалось сохранить {fname}: {e}")
+        # Стартуем задания
+        futures = []
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for idx, chunk in enumerate(chunks, start=1):
+                fname = f"{idx:0{zeros}d}.png"
+                out_path = os.path.join(out_dir, fname)
+                fut = ex.submit(_job, chunk, out_path)
+                fut._stitch_idx = idx  # для сообщения об ошибках
+                fut._stitch_name = fname
+                futures.append(fut)
 
-            cur = min(total, (i // group) + 1); prog.setValue(cur); QApplication.processEvents(); i += group
+            # Отслеживаем завершение в стабильном порядке отображения прогресса
+            for fut in futures:
+                try:
+                    while not fut.done():
+                        QApplication.processEvents()
+                    fut.result()
+                    made += 1
+                except Exception as e:
+                    idx = getattr(fut, "_stitch_idx", "?")
+                    fname = getattr(fut, "_stitch_name", "<unknown>")
+                    QMessageBox.warning(self, "Сохранение", f"Группа {idx} ({fname}) пропущена: {e}")
+                finally:
+                    done += 1
+                    prog.setValue(done)
+                    QApplication.processEvents()
 
         prog.close()
         return made

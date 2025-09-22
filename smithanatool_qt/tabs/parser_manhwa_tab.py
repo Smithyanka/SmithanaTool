@@ -200,6 +200,29 @@ class ParserManhwaTab(QWidget):
         hl4.addWidget(self.spin_per); hl4.addStretch(1)
         v.addLayout(hl4)
 
+        # ----- Потоки (как в StitchSection)
+        hl_thr = QHBoxLayout();
+        hl_thr.setContentsMargins(0, 0, 0, 0);
+        hl_thr.setSpacing(6)
+        self.chk_auto_threads = QCheckBox("Авто потоки");
+        self.chk_auto_threads.setChecked(True)
+
+        self.spin_threads = QSpinBox();
+        self.spin_threads.setRange(1, 32)
+        _default_thr = max(2, (os.cpu_count() or 4) // 2)
+        self.spin_threads.setValue(min(32, _default_thr))
+
+        hl_thr.addWidget(self.chk_auto_threads)
+        hl_thr.addSpacing(8)
+        hl_thr.addWidget(QLabel("Потоки:"))
+        hl_thr.addWidget(self.spin_threads)
+        hl_thr.addStretch(1)
+        v.addLayout(hl_thr)
+
+        # Доступность «Потоки» зависит от «Авто потоки»
+        self.spin_threads.setEnabled(False)
+        self.chk_auto_threads.toggled.connect(lambda checked: self.spin_threads.setEnabled(not checked))
+
         gl.addWidget(grp, row, 0, 1, 3); row += 1
 
 
@@ -320,8 +343,8 @@ class ParserManhwaTab(QWidget):
             lambda v: self._save_bool_ini("strip_metadata", bool(v))
         )
 
-        # Папки уже сохраняются внутри _pick_out() / _pick_stitch_dir()
-        # (save_attr_string(self, "_out_dir"/"_stitch_dir", ...))
+        self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini("auto_threads", v))
+        self.spin_threads.valueChanged.connect(lambda v: self._save_int_ini("threads", int(v)))
 
         self._out_dir = ""
         self._stitch_dir = ""
@@ -593,6 +616,8 @@ class ParserManhwaTab(QWidget):
             compress_level=6,
             strip_metadata=True,
             per=12,
+            auto_threads=True,
+            threads=max(2, (os.cpu_count() or 4) // 2),
         )
 
         # UI без лишних сигналов
@@ -623,6 +648,9 @@ class ParserManhwaTab(QWidget):
         self._update_no_resize()
         self._update_same_dir()
 
+        self.chk_auto_threads.setChecked(defaults["auto_threads"])
+        self.spin_threads.setValue(min(32, defaults["threads"]))
+
         # сохранить в INI
         self._save_int_ini("mode", default_mode_idx)
         self._save_str_ini("title", defaults["title"])
@@ -637,6 +665,8 @@ class ParserManhwaTab(QWidget):
         self._save_int_ini("compress_level", defaults["compress_level"])
         self._save_bool_ini("strip_metadata", defaults["strip_metadata"])
         self._save_int_ini("per", defaults["per"])
+        self._save_bool_ini("auto_threads", defaults["auto_threads"])
+        self._save_int_ini("threads", min(32, defaults["threads"]))
 
     def _save_bool_ini(self, key: str, value: bool):
         # Надёжная запись булева флага в INI как "1"/"0"
@@ -771,6 +801,8 @@ class ParserManhwaTab(QWidget):
             per=int(self.spin_per.value()),
             auto_confirm_purchase=self.chk_auto_buy.isChecked(),
             auto_confirm_use_rental=self.chk_auto_use_ticket.isChecked(),
+            auto_threads=self.chk_auto_threads.isChecked(),
+            threads=int(self.spin_threads.value())
         )
 
     def _append_log(self, s: str):
@@ -909,6 +941,12 @@ class ParserManhwaTab(QWidget):
             bind_checkbox(self.chk_delete, "delete_sources", True)
             bind_checkbox(self.chk_opt, "optimize_png", True)
             bind_checkbox(self.chk_strip, "strip_metadata", True)
+
+
+            # Авто потоки
+            bind_checkbox(self.chk_auto_threads, "auto_threads", True)
+            bind_spinbox(self.spin_threads, "threads", max(2, (os.cpu_count() or 4) // 2))
+            self.spin_threads.setEnabled(not self.chk_auto_threads.isChecked())
 
         # Отразим пути в подписи (цвет — зелёный если задано)
         self.lbl_out.set_full_text(self._out_dir or "— не выбрано —")

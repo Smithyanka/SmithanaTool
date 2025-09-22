@@ -5,7 +5,8 @@ import os
 from PIL import Image
 
 def is_psd(path: str) -> bool:
-    return os.path.splitext(path)[1].lower() == ".psd"
+    ext = os.path.splitext(path)[1].lower()
+    return ext in (".psd", ".psb")
 
 def filter_psd(paths: Iterable[str]) -> List[str]:
     return [p for p in paths if is_psd(p)]
