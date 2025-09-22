@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 from typing import List
 import os, sys, subprocess
@@ -7,8 +6,8 @@ from PySide6.QtWidgets import (
     QCheckBox, QFileDialog, QMessageBox, QProgressDialog, QApplication
 )
 from PySide6.QtCore import Qt, QTimer
-from .converters.png_gif import filter_png as filter_png_for_gif, convert_png_to_gif
-from .converters.png_pdf import filter_png as filter_png_for_pdf, convert_png_to_pdf, merge_pngs_to_pdf
+from .converters.png_gif import filter_images as filter_png_for_gif, convert_png_to_gif
+from .converters.png_pdf import filter_images as filter_png_for_pdf, convert_png_to_pdf, merge_pngs_to_pdf
 from .converters.psd_png import filter_psd, convert_psd_to_png
 
 from smithanatool_qt.settings_bind import (
@@ -35,7 +34,19 @@ class ConversionsPanel(QWidget):
 
         # GIF
         box_gif = QGroupBox("PNG → GIF конвертор"); g = QVBoxLayout(box_gif)
-        row_g1 = QHBoxLayout(); self.gif_dither = QCheckBox("Дизеринг"); self.gif_dither.setChecked(True); row_g1.addWidget(self.gif_dither); row_g1.addStretch(1); g.addLayout(row_g1)
+        row_g1 = QHBoxLayout()
+        self.gif_dither = QCheckBox("Дизеринг"); self.gif_dither.setChecked(True); row_g1.addWidget(self.gif_dither)
+        row_g1.addSpacing(12)
+        self.gif_auto_threads = QCheckBox("Авто потоки"); self.gif_auto_threads.setChecked(True); row_g1.addWidget(self.gif_auto_threads)
+        row_g1.addSpacing(12)
+        row_g1.addWidget(QLabel("Потоки:"))
+        self.gif_threads = QSpinBox(); self.gif_threads.setRange(1, 32)
+        _default_thr = min(32, max(2, (os.cpu_count() or 4)//2))
+        self.gif_threads.setValue(_default_thr)
+        row_g1.addWidget(self.gif_threads)
+        row_g1.addStretch(1)
+        g.addLayout(row_g1)
+
         row_g2 = QHBoxLayout(); row_g2.addStretch(1); self.btn_gif_convert_sel = QPushButton("Преобразовать выделенные"); self.btn_gif_convert_pick = QPushButton("Выбрать файлы…"); row_g2.addWidget(self.btn_gif_convert_sel); row_g2.addWidget(self.btn_gif_convert_pick); g.addLayout(row_g2)
 
         # PDF
@@ -54,7 +65,6 @@ class ConversionsPanel(QWidget):
         row_s1.addWidget(QLabel("Потоки:")); self.psd_threads = QSpinBox(); self.psd_threads.setRange(1, 8); self.psd_threads.setValue(8); row_s1.addWidget(self.psd_threads); row_s1.addStretch(1); s.addLayout(row_s1)
         row_s2 = QHBoxLayout(); row_s2.addWidget(QLabel("Уровень сжатия PNG (0–9):"));
 
-
         self.psd_compress = QSpinBox(); self.psd_compress.setRange(0, 9); self.psd_compress.setValue(7); row_s2.addWidget(self.psd_compress); row_s2.addStretch(1); s.addLayout(row_s2)
 
         row_s3 = QHBoxLayout()
@@ -65,24 +75,22 @@ class ConversionsPanel(QWidget):
         row_s3.addWidget(self.btn_psd_pick)
         s.addLayout(row_s3)
 
-
         # Примечение
         self.psd_note = QLabel(
             "Примечание: При выборе 1 или 2 очень больших файлов желательно выставлять 1-2 потока."
         )
         self.psd_note.setWordWrap(True)
-
-
         self.psd_note.setStyleSheet("color: #666; font-size: 12px;")
         s.addSpacing(6)
         s.addWidget(self.psd_note)
 
-
-
-
         v.addWidget(box_gif); v.addWidget(box_pdf); v.addWidget(box_psd); v.addStretch(1)
 
+        # UI state hooks
         self.psd_auto_threads.toggled.connect(self._apply_psd_threads_state); self._apply_psd_threads_state()
+        self.gif_auto_threads.toggled.connect(self._apply_gif_threads_state); self._apply_gif_threads_state()
+
+        # Actions
         self.btn_gif_convert_sel.clicked.connect(self._gif_convert_selected); self.btn_gif_convert_pick.clicked.connect(self._gif_convert_pick)
         self.btn_pdf_convert_sel.clicked.connect(self._pdf_convert_selected); self.btn_pdf_convert_pick.clicked.connect(self._pdf_convert_pick)
         self.btn_psd_pick.clicked.connect(self._psd_pick_convert)
@@ -90,6 +98,9 @@ class ConversionsPanel(QWidget):
 
         # --- persist changes to INI ---
         self.gif_dither.toggled.connect(lambda v: self._save_bool_ini("gif_dither", v))
+        self.gif_auto_threads.toggled.connect(lambda v: self._save_bool_ini("gif_auto_threads", v))
+        self.gif_threads.valueChanged.connect(lambda v: self._save_int_ini("gif_threads", v))
+
         self.pdf_quality.valueChanged.connect(lambda v: self._save_int_ini("pdf_quality", v))
         self.pdf_dpi.valueChanged.connect(lambda v: self._save_int_ini("pdf_dpi", v))
         self.pdf_one_file.toggled.connect(lambda v: self._save_bool_ini("pdf_one_file", v))
@@ -104,6 +115,9 @@ class ConversionsPanel(QWidget):
         # дефолты
         d = dict(
             gif_dither=True,
+            gif_auto_threads=True,
+            gif_threads=min(32, max(2, (os.cpu_count() or 4)//2)),
+
             pdf_quality=92,
             pdf_dpi=100,
             pdf_one_file=True,
@@ -115,6 +129,9 @@ class ConversionsPanel(QWidget):
 
         # UI без шумных сигналов, там где надо
         self.gif_dither.setChecked(d["gif_dither"])
+        self.gif_auto_threads.setChecked(d["gif_auto_threads"])
+        self.gif_threads.setValue(d["gif_threads"])
+
         self.pdf_quality.setValue(d["pdf_quality"])
         self.pdf_dpi.setValue(d["pdf_dpi"])
         self.pdf_one_file.setChecked(d["pdf_one_file"])
@@ -125,6 +142,9 @@ class ConversionsPanel(QWidget):
 
         # сохранить в INI
         self._save_bool_ini("gif_dither", d["gif_dither"])
+        self._save_bool_ini("gif_auto_threads", d["gif_auto_threads"])
+        self._save_int_ini("gif_threads", d["gif_threads"])
+
         self._save_int_ini("pdf_quality", d["pdf_quality"])
         self._save_int_ini("pdf_dpi", d["pdf_dpi"])
         self._save_bool_ini("pdf_one_file", d["pdf_one_file"])
@@ -133,9 +153,16 @@ class ConversionsPanel(QWidget):
         self._save_int_ini("psd_threads", d["psd_threads"])
         self._save_int_ini("psd_compress", d["psd_compress"])
 
+        # применить зависимость доступности полей
+        self._apply_gif_threads_state()
+        self._apply_psd_threads_state()
+
     def _apply_settings_from_ini(self):
         with group("ConversionsPanel"):
             bind_checkbox(self.gif_dither, "gif_dither", True)
+            bind_checkbox(self.gif_auto_threads, "gif_auto_threads", True)
+            bind_spinbox(self.gif_threads, "gif_threads", min(32, max(2, (os.cpu_count() or 4)//2)))
+
             bind_spinbox(self.pdf_quality, "pdf_quality", 92)
             bind_spinbox(self.pdf_dpi, "pdf_dpi", 100)
             bind_checkbox(self.pdf_one_file, "pdf_one_file", True)
@@ -143,6 +170,9 @@ class ConversionsPanel(QWidget):
             bind_checkbox(self.psd_auto_threads, "psd_auto_threads", True)
             bind_spinbox(self.psd_threads, "psd_threads", 8)
             bind_spinbox(self.psd_compress, "psd_compress", 7)
+
+        self._apply_gif_threads_state()
+        self._apply_psd_threads_state()
 
     def _save_str_ini(self, key: str, value: str):
         try:
@@ -175,6 +205,28 @@ class ConversionsPanel(QWidget):
     def _apply_psd_threads_state(self):
         self.psd_threads.setEnabled(not self.psd_auto_threads.isChecked())
 
+    def _apply_gif_threads_state(self):
+        self.gif_threads.setEnabled(not self.gif_auto_threads.isChecked())
+
+    def _resolve_gif_threads(self) -> int:
+        """Логика 'как в StitchSection': осторожный авто-подбор потоков."""
+        if self.gif_auto_threads.isChecked():
+            c = os.cpu_count() or 2
+            if c <= 2:
+                auto = 1
+            elif c <= 4:
+                auto = 2
+            elif c <= 8:
+                auto = 4
+            else:
+                auto = min(8, c - 2)
+            return max(1, min(8, auto))
+        try:
+            val = int(self.gif_threads.value())
+        except Exception:
+            val = 1
+        return max(1, min(32, val))
+
     def _show_done_box(self, out_dir: str, message: str):
         box = QMessageBox(self); box.setWindowTitle("Готово"); box.setText(message)
         btn_open = box.addButton("Открыть папку", QMessageBox.ActionRole); box.addButton(QMessageBox.Ok)
@@ -185,13 +237,14 @@ class ConversionsPanel(QWidget):
     # GIF
     def _gif_convert_selected(self):
         files = self._selected_from_gallery(filter_png_for_gif)
-        if not files: QMessageBox.information(self, "PNG→GIF", "Нет выбранных PNG в галерее."); return
-        out_dir = self._ask_out_dir("Папка для GIF"); 
+        if not files: QMessageBox.information(self, "PNG→GIF", "Нет выбранных картинок в галерее."); return
+        out_dir = self._ask_out_dir("Папка для GIF")
         if not out_dir: return
         self._gif_convert(files, out_dir)
 
     def _gif_convert_pick(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Выберите PNG", "", "PNG (*.png)")
+        files, _ = QFileDialog.getOpenFileNames(self, "Выберите изображения", "",
+                                                "Изображения (*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff *.gif)")
         if not files: return
         out_dir = self._ask_out_dir("Папка для GIF")
         if not out_dir: return
@@ -199,21 +252,53 @@ class ConversionsPanel(QWidget):
 
     def _gif_convert(self, files: list[str], out_dir: str):
         dither = bool(self.gif_dither.isChecked())
-        dlg = QProgressDialog("PNG→GIF: выполняется конвертация…", None, 0, len(files), self)
+        os.makedirs(out_dir, exist_ok=True)
+
+        total = len(files)
+        workers = self._resolve_gif_threads()
+        workers = max(1, min(workers, total))
+
+        dlg = QProgressDialog("PNG→GIF: выполняется конвертация…", None, 0, total, self)
         dlg.setWindowTitle("Конвертация"); dlg.setWindowModality(Qt.ApplicationModal); dlg.setCancelButton(None); dlg.setMinimumDuration(0); dlg.show(); QApplication.processEvents()
+
         ok = 0
-        for i, src in enumerate(files, 1):
-            dst = os.path.join(out_dir, os.path.splitext(os.path.basename(src))[0] + ".gif")
-            success, msg = convert_png_to_gif(src, dst, dither=dither)
-            if success: ok += 1
-            else: QMessageBox.warning(self, "PNG→GIF", f"{os.path.basename(src)}: {msg}")
-            dlg.setValue(i); QApplication.processEvents()
-        dlg.close(); self._show_done_box(out_dir, f"PNG→GIF: успешно {ok}/{len(files)}")
+        errors: list[str] = []
+
+        def _task(src: str, dst: str):
+            return convert_png_to_gif(src, dst, dither=dither)
+
+        # подготовим все назначения
+        tasks = []
+        for src in files:
+            base = os.path.splitext(os.path.basename(src))[0] + ".gif"
+            dst = os.path.join(out_dir, base)
+            tasks.append((src, dst))
+
+        # параллельно, но без перегруза
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = [ex.submit(_task, s, d) for (s, d) in tasks]
+            for i, fut in enumerate(as_completed(futs), 1):
+                try:
+                    success, msg = fut.result()
+                    if success:
+                        ok += 1
+                    else:
+                        errors.append(f"{os.path.basename(msg) if os.path.isabs(msg) else msg}")
+                except Exception as e:
+                    errors.append(str(e))
+                dlg.setValue(i); QApplication.processEvents()
+
+        dlg.close()
+        self._show_done_box(out_dir, f"PNG→GIF: успешно {ok}/{total}")
+        if errors:
+            # Покажем до 5 уникальных ошибок
+            uniq = list(dict.fromkeys(errors))[:5]
+            QMessageBox.warning(self, "PNG→GIF", "Некоторые файлы не сконвертированы:\n" + "\n".join(uniq))
 
     # PDF
     def _pdf_convert_selected(self):
         files = self._selected_from_gallery(filter_png_for_pdf)
-        if not files: QMessageBox.information(self, "PNG→PDF", "Нет выбранных PNG в галерее."); return
+        if not files: QMessageBox.information(self, "PNG→PDF", "Нет выбранных картинок в галерее."); return
         if self.pdf_one_file.isChecked():
             out_path, _ = QFileDialog.getSaveFileName(self, "Сохранить один PDF как", "images.pdf", "PDF (*.pdf)")
             if not out_path: return
@@ -224,7 +309,8 @@ class ConversionsPanel(QWidget):
             self._pdf_convert_many(files, out_dir)
 
     def _pdf_convert_pick(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Выберите PNG", "", "PNG (*.png)")
+        files, _ = QFileDialog.getOpenFileNames(self, "Выберите изображения", "",
+                                                "Изображения (*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff *.gif)")
         if not files: return
         if self.pdf_one_file.isChecked():
             out_path, _ = QFileDialog.getSaveFileName(self, "Сохранить один PDF как", "images.pdf", "PDF (*.pdf)")
@@ -353,4 +439,3 @@ class ConversionsPanel(QWidget):
             # Покажем первые несколько ошибок, чтобы не заспамить
             err_text = "\n".join(list(dict.fromkeys(errors))[:5])
             QMessageBox.warning(self, "PSD→PNG", f"Некоторые файлы не сконвертированы:\n{err_text}")
-
