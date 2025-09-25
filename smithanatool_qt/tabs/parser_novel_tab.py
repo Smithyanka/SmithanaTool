@@ -5,7 +5,7 @@ from html import escape as _html_escape
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, QLineEdit, QTextEdit, QPushButton,
     QSplitter, QRadioButton, QButtonGroup, QFileDialog, QMessageBox, QSizePolicy,
-    QGroupBox, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea, QFrame
+    QGroupBox, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea, QFrame, QSizePolicy
 )
 
 from PySide6.QtCore import Qt, Slot, QTimer, QStandardPaths
@@ -21,6 +21,9 @@ from .novel_worker import NovelParserWorker, NovelParserConfig
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel
 
+from smithanatool_qt.parsers.auth_session import (
+    get_session_path, delete_session
+)
 class ElidedLabel(QLabel):
     """QLabel, который автоматически укорачивает длинный текст с многоточием.
     По умолчанию — в середине (ElideMiddle). Хранит полный текст в tooltip.
@@ -121,7 +124,27 @@ class ParserNovelTab(QWidget):
         self.txt_log = QTextEdit(); self.txt_log.setReadOnly(True)
         vr.addWidget(self.txt_log, 1)
         self.btn_clear = QPushButton("Очистить лог")
-        al = QHBoxLayout(); al.setContentsMargins(0,0,0,0); al.setSpacing(6); al.addStretch(1); al.addWidget(self.btn_clear); vr.addLayout(al)
+        self.btn_del_sess = QPushButton("Удалить сессию")
+
+        # слева — примечание
+        self.lbl_session_hint = QLabel(
+            "С течением времени срок сессии может истечь.\n"
+            "Если парсер не может открыть страницу главы, то удалите сессию и авторизуйтесь заново."
+        )
+        self.lbl_session_hint.setWordWrap(True)
+        self.lbl_session_hint.setTextFormat(Qt.PlainText)
+        self.lbl_session_hint.setStyleSheet("color: #a9a9a9; font-size: 11px;")
+        self.lbl_session_hint.setMinimumWidth(200)
+        self.lbl_session_hint.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        al = QHBoxLayout();
+        al.setContentsMargins(0, 0, 0, 0);
+        al.setSpacing(6)
+        al.addWidget(self.lbl_session_hint, 1)  # слева подсказка
+        al.addStretch(1)
+        al.addWidget(self.btn_del_sess)
+        al.addWidget(self.btn_clear)
+        vr.addLayout(al)
 
         left_scroll = QScrollArea(self)
         left_scroll.setWidgetResizable(True)
@@ -220,6 +243,7 @@ class ParserNovelTab(QWidget):
         self.rb_number.toggled.connect(self._on_mode_toggled)
         self.rb_id.toggled.connect(self._on_mode_toggled)
         self.btn_reset.clicked.connect(self.reset_to_defaults)
+        self.btn_del_sess.clicked.connect(self._delete_session_clicked)
 
         # --- persist line edits to INI on change ---
         self.ed_title.editingFinished.connect(
@@ -341,7 +365,7 @@ class ParserNovelTab(QWidget):
     def _build_ids_ui(self):
         if self._ids_ui_built:
             return
-        ids_grp = QGroupBox("Сохранённые ID")
+        ids_grp = QGroupBox()
         self._ids_grp = ids_grp
         ids_grp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         ids_v = QVBoxLayout(ids_grp)
@@ -520,7 +544,34 @@ class ParserNovelTab(QWidget):
         except Exception:
             pass
 
+
+
     # ---------- Actions ----------
+    @Slot()
+    def _delete_session_clicked(self):
+        if not getattr(self, "_out_dir", ""):
+            QMessageBox.information(self, "Удалить сессию",
+                                    "Сначала выберите папку сохранения — там хранится файл сессии kakao_auth.json.")
+            return
+        p = get_session_path(self._out_dir)
+        if not p.exists():
+            QMessageBox.information(self, "Удалить сессию",
+                                    f"Файл сессии не найден:\n{p}")
+            return
+        ans = QMessageBox.question(
+            self, "Подтверждение",
+            f"Удалить файл сессии?\n\n{p}",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if ans == QMessageBox.Yes:
+            ok = delete_session(self._out_dir)
+            if ok:
+                self._append_log(f"[OK] Удалена сессия: {p}")
+                QMessageBox.information(self, "Удалить сессию", "Файл сессии удалён.")
+            else:
+                self._append_log(f"[WARN] Не удалось удалить сессию: {p}")
+                QMessageBox.warning(self, "Удалить сессию", "Не удалось удалить файл сессии.")
+
     @Slot()
     def _pick_out(self):
         dlg = QFileDialog(self, "Выберите папку сохранения")

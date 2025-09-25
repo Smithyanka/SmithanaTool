@@ -7,8 +7,14 @@ from typing import Optional, List, Iterable, Callable
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
 from smithanatool_qt.parsers.kakao.core import run_parser
-from typing import Optional
 import os
+
+from smithanatool_qt.parsers.kakao.auth import _load_cookie_raw_from_session
+from smithanatool_qt.parsers.kakao.episodes import _safe_list_all
+from smithanatool_qt.parsers.kakao.utils import ensure_dir
+from pathlib import Path
+import json
+
 
 @dataclass
 class ParserConfig:
@@ -31,7 +37,11 @@ class ParserConfig:
     auto_confirm_purchase: bool = False
     auto_confirm_use_rental: bool = False
     auto_threads: bool = True
-    threads: int = max(2, (os.cpu_count() or 4) // 2)
+    threads: int = max(2, (os.cpu_count() or 4) // 2),
+    cache_episode_map: bool = False
+    delete_cache_after: bool = True
+    scroll_ms: int = 30000
+    by_index_spec: Optional[str] = None
 
 class ManhwaParserWorker(QObject):
     log = Signal(str)
@@ -39,6 +49,7 @@ class ManhwaParserWorker(QObject):
     finished = Signal()
     need_login = Signal()  # UI should show "press Continue after login"
     error = Signal(str)
+    ui_pick_required = Signal(int, object)
 
     ask_purchase = Signal(object, object)  # ch_num, price(int|None)
     ask_use_rental = Signal(int, int, object, str)  # rental_count, own_count, balance(int|None), chapter_label
@@ -56,6 +67,14 @@ class ManhwaParserWorker(QObject):
         self._rental_result: bool = False
         self._browser_closed_seen = False
 
+        self._ui_pick_event = threading.Event()
+        self._ui_selected_ids: Optional[List[str]] = None
+        self._ui_pick_cancelled = False
+
+        self._cookie_raw_cached: Optional[str] = None
+
+    def _catch_cookie_after_auth(self, cookie: str):
+        self._cookie_raw_cached = str(cookie or "")
     # threading helpers
     def move_to_thread_and_start(self):
         th = QThread()
@@ -71,6 +90,18 @@ class ManhwaParserWorker(QObject):
 
         th.start()
 
+    @Slot(object)
+    def provide_ui_selected_ids(self, ids: object):
+        try:
+            self._ui_selected_ids = [str(x) for x in (ids or [])]
+        except Exception:
+            self._ui_selected_ids = None
+        self._ui_pick_event.set()
+
+    @Slot()
+    def cancel_ui_pick(self):
+        self._ui_pick_cancelled = True
+        self._ui_pick_event.set()
     @Slot(bool)
     def provide_purchase_answer(self, ans: bool):
         self._purchase_result = bool(ans)
@@ -99,18 +130,18 @@ class ManhwaParserWorker(QObject):
     def _stop_flag(self) -> bool:
         return self._stop_event.is_set()
 
+    def _wait_continue(self) -> bool:
+        # True когда пользователь нажал «Продолжить» ИЛИ когда нас остановили
+        return self._resume_event.is_set() or self._stop_event.is_set()
+
     def _on_need_login(self):
         self._resume_event.clear()
         self.need_login.emit()
-        # Ждём либо "Продолжить", либо "Стоп"
-        while not self._stop_event.is_set():
-            if self._resume_event.wait(timeout=0.2):
-                break
 
     def _on_log(self, s: str):
         if not self._browser_closed_seen and self._is_browser_closed_logline(s):
             self._browser_closed_seen = True
-            self.error.emit("Браузер был закрыт")
+            self._resume_event.set()
             return
         self.log.emit(s)
 
@@ -136,6 +167,7 @@ class ManhwaParserWorker(QObject):
         s_low = (s or "").lower()
         needles = [
             # типичные формулировки Playwright/Chromium в логах:
+            "браузер закрыт",
             "page.goto:",
             "net::err_aborted",
             "frame was detached",
@@ -203,21 +235,90 @@ class ManhwaParserWorker(QObject):
             chapters: Optional[Iterable[str]] = None
             by_index: Optional[int] = None
 
+
+
             if mode == "number":
                 chapter_spec = spec  # e.g. "1,2,5-7 10"
             elif mode == "id":
                 parts = [p.strip() for p in spec.replace(",", " ").split() if p.strip()]
                 chapters = parts
             elif mode == "index":
+                if ("," in spec) or ("-" in spec):
+                    by_index_spec = spec
+                else:
+                    try:
+                        by_index = int(spec)
+                    except Exception:
+                        self.error.emit("Индекс должен быть числом или диапазоном (например, '1,2' или '7-10').")
+                        return
+            elif mode == "ui":
                 try:
-                    by_index = int(spec)
+                    sid = int(title_id)
                 except Exception:
-                    self.error.emit("Индекс должен быть числом.")
+                    self.error.emit("ID тайтла должен быть числом.")
+                    return
+
+                # 2) авторизация/сессия в фоне (как в других режимах)
+                self._cookie_raw_cached = None
+                run_parser(
+                    title_id=title_id,
+                    out_dir=self.cfg.out_dir,
+                    on_log=self._on_log,
+                    on_need_login=self._on_need_login,
+                    stop_flag=self._stop_flag,
+                    auth_only=True,
+                    on_after_auth=self._catch_cookie_after_auth,
+                    wait_continue=self._wait_continue,
+                )
+                self._browser_closed_seen = False
+                if self._stop_event.is_set():
+                    return
+                if not self._cookie_raw_cached:
+                    # На этом месте мы окажемся, если исключение не было брошено (значит авторизация ок),
+                    # но cookie не передали по какой-то причине — страховка.
+                    self.error.emit("Не удалось получить сессию после авторизации.")
+                    return
+
+                # 2) список эпизодов уже в воркере (cookie у нас есть)
+                rows = _safe_list_all(sid, "asc", self._cookie_raw_cached, self._on_log, stop_flag=self._stop_flag,
+                                      retries=2) or []
+                if self._stop_event.is_set():
+                    return
+                if not rows:
+                    self.error.emit("Не удалось получить список эпизодов.")
+                    return
+
+                # 3) сохранить episode_map.json (как было)
+                try:
+                    series_dir = Path(self.cfg.out_dir) / str(sid)
+                    cache_dir = series_dir / "cache"
+                    ensure_dir(str(series_dir));
+                    ensure_dir(str(cache_dir))
+                    (cache_dir / "episode_map.json").write_text(
+                        json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                    self.log.emit(f"[CACHE] Сохранена карта эпизодов: {cache_dir / 'episode_map.json'}")
+                except Exception as e:
+                    self.log.emit(f"[WARN] Не удалось сохранить карту эпизодов: {e}")
+
+                # 4) запросить у UI выбор глав и дождаться ответа (как у вас)
+                self._ui_pick_event.clear()
+                self._ui_pick_cancelled = False
+                self.ui_pick_required.emit(sid, rows)
+                while not self._stop_event.is_set():
+                    if self._ui_pick_event.wait(timeout=0.2):
+                        break
+                if self._stop_event.is_set() or self._ui_pick_cancelled:
+                    self.log.emit("[STOP] Выбор глав отменён пользователем.")
+                    return
+
+                chapters = self._ui_selected_ids or []
+                if not chapters:
+                    self.error.emit("Ничего не выбрано.")
                     return
             else:
                 self.error.emit("Неизвестный режим.")
                 return
-
             auto_cfg = self._build_auto_concat()
 
             def _confirm_purchase(price: Optional[int], balance: Optional[int]) -> bool:
@@ -249,7 +350,7 @@ class ManhwaParserWorker(QObject):
                 if self._stop_event.is_set():
                     return False
                 self.log.emit(
-                    "[OK] Использую тикет." if self._rental_result else "[SKIP] Пользователь отказал от использования тикета.")
+                    "[OK] Использую тикет." if self._rental_result else "[SKIP] Пользователь отказал от использования тикета. Пропускаю.")
                 return self._rental_result
 
             run_parser(
@@ -261,16 +362,25 @@ class ManhwaParserWorker(QObject):
                 on_need_login=self._on_need_login,
                 stop_flag=self._stop_flag,
                 min_width=int(self.cfg.min_width),
+                use_cache_map=bool(self.cfg.cache_episode_map),
+                delete_cache_after=bool(self.cfg.delete_cache_after),
+                scroll_ms=int(self.cfg.scroll_ms),
                 auto_concat=auto_cfg,
                 on_confirm_purchase=_confirm_purchase,
                 on_confirm_use_rental=_confirm_use_rental,
                 by_index=by_index,
+                by_index_spec=locals().get('by_index_spec'),
+                wait_continue=self._wait_continue,
             )
         except Exception as e:
-            friendly = self._browser_closed_text_if_any(e)
-            if friendly:
-                self.error.emit(friendly)
+            s = str(e) or ""
+            if s.startswith("[CANCEL]"):
+                self.log.emit(s)
             else:
-                self.error.emit(str(e))
+                friendly = self._browser_closed_text_if_any(e)
+                if friendly:
+                    self.error.emit(friendly)
+                else:
+                    self.error.emit(s)
         finally:
             self.finished.emit()

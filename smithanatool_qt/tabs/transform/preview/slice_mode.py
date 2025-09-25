@@ -40,6 +40,28 @@ class SliceModeMixin:
                 pass
             if hasattr(self, "_update_info_label"):
                 self._update_info_label()
+    def set_slice_by(self, by: str):
+        by = str(by).lower()
+        self._slice_by = "height" if ("height" in by or "высот" in by) else "count"
+        if getattr(self, "_slice_enabled", False):
+            self._init_slice_bounds()
+            try:
+                self.label.update()
+            except Exception:
+                pass
+            if hasattr(self, "_update_info_label"):
+                self._update_info_label()
+
+    def set_slice_height(self, px: int):
+        self._slice_height_px = max(1, int(px))
+        if getattr(self, "_slice_enabled", False):
+            self._init_slice_bounds()
+            try:
+                self.label.update()
+            except Exception:
+                pass
+            if hasattr(self, "_update_info_label"):
+                self._update_info_label()
 
     def save_slices(self, out_dir: str) -> int:
         if not (getattr(self, "_current_path", None) and getattr(self, "_images", None) and getattr(self, "_slice_enabled", False)):
@@ -80,8 +102,20 @@ class SliceModeMixin:
         if img is None:
             self._slice_bounds = []; return
         h = img.height()
-        n = max(2, getattr(self, "_slice_count", 2))
-        self._slice_bounds = [int(round(i * h / n)) for i in range(n+1)]
+        by = getattr(self, "_slice_by", "count")
+
+        if by == "height":
+            step = max(1, int(getattr(self, "_slice_height_px", 2000)))
+            bounds = [0]
+            y = 0
+            while y + step < h:
+                y += step
+                bounds.append(y)
+            bounds.append(h)
+            self._slice_bounds = bounds
+        else:
+            n = max(2, getattr(self, "_slice_count", 2))
+            self._slice_bounds = [int(round(i * h / n)) for i in range(n + 1)]
         for i in range(1, len(self._slice_bounds)):
             if self._slice_bounds[i] <= self._slice_bounds[i-1]:
                 self._slice_bounds[i] = self._slice_bounds[i-1] + 1

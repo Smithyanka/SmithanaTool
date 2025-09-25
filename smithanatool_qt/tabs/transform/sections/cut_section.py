@@ -3,7 +3,7 @@ from __future__ import annotations
 import os, sys, subprocess
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton,
-    QFileDialog, QMessageBox, QProgressDialog, QApplication, QCheckBox
+    QFileDialog, QMessageBox, QProgressDialog, QApplication, QCheckBox, QComboBox, QLineEdit
 )
 from PySide6.QtCore import Qt, QTimer
 from smithanatool_qt.settings_bind import group, bind_spinbox, bind_checkbox, bind_line_edit
@@ -23,16 +23,45 @@ class CutSection(QWidget):
     def __init__(self, preview=None, parent=None):
         super().__init__(parent)
         self._preview = preview
-
+        self._slice_by_le = QLineEdit(self)
+        self._slice_by_le.setVisible(False)
         v = QVBoxLayout(self); v.setAlignment(Qt.AlignTop)
+
+        # ---- режим нарезки
+        row_mode = QHBoxLayout()
+        row_mode.addWidget(QLabel("Режим:"))
+        self.combo_mode = QComboBox()
+        self.combo_mode.addItems(["По количеству фрагментов", "По высоте"])
+        row_mode.addWidget(self.combo_mode)
+        row_mode.addStretch(1)
+        v.addLayout(row_mode)
 
         # ---- строка с количеством фрагментов
         row1 = QHBoxLayout()
-        row1.addWidget(QLabel("Количество фрагментов:"))
-        self.spin_slices = QSpinBox(); self.spin_slices.setRange(2, 99); self.spin_slices.setValue(8)
+        self.lbl_count = QLabel("Количество фрагментов:")
+        row1.addWidget(self.lbl_count)
+        self.spin_slices = QSpinBox();
+        self.spin_slices.setRange(2, 99);
+        self.spin_slices.setValue(8)
         row1.addWidget(self.spin_slices)
-        row1.addStretch(1)  # ← оставляем только один stretch
+        row1.addStretch(1)
         v.addLayout(row1)
+
+        # ---- строка "Высота (px)" для режима "По высоте"
+        row1h = QHBoxLayout()
+        self.lbl_height = QLabel("Высота (px):")
+        self.spin_height = QSpinBox()
+        self.spin_height.setRange(100, 30000)
+        self.spin_height.setSingleStep(50)
+        self.spin_height.setValue(2000)
+        row1h.addWidget(self.lbl_height)
+        row1h.addWidget(self.spin_height)
+        row1h.addStretch(1)
+        v.addLayout(row1h)
+
+        # по умолчанию высота скрыта (активен режим по количеству)
+        self.lbl_height.setVisible(False)
+        self.spin_height.setVisible(False)
 
         # ---- чекбокс под спинбоксом
         row1b = QHBoxLayout()
@@ -87,6 +116,11 @@ class CutSection(QWidget):
             self.spin_slices.valueChanged.connect(self._on_count_changed)
             self.spin_slices.valueChanged.connect(lambda v: self._save_int_ini("slices", v))
 
+            self.combo_mode.currentIndexChanged.connect(self._on_mode_changed)
+
+            self.spin_height.valueChanged.connect(self._on_height_changed)
+            self.spin_height.valueChanged.connect(lambda v: self._save_int_ini("height_px", v))
+
             # сохранение
             self.btn_save.clicked.connect(self._save)
 
@@ -103,9 +137,42 @@ class CutSection(QWidget):
                 self.btn_toggle.setText("Вкл")
 
     # ---- новые/обновлённые методы ----
+    def _current_slice_by(self) -> str:
+        # "count" или "height"
+        return "count" if self.combo_mode.currentIndex() == 0 else "height"
+
+    def _on_mode_changed(self, idx: int):
+        by = self._current_slice_by()
+        show_count = (by == "count")
+
+        # показываем нужный блок
+        self.lbl_count.setVisible(show_count)
+        self.spin_slices.setVisible(show_count)
+        self.lbl_height.setVisible(not show_count)
+        self.spin_height.setVisible(not show_count)
+
+        # сохранить в ini (как строку)
+        self._save_str_ini("slice_by", by)
+
+        # если режим уже включён — пересчитать превью
+        if self._preview and getattr(self._preview, "_slice_enabled", False):
+            if by == "count":
+                self._preview.set_slice_by("count")
+                self._preview.set_slice_count(int(self.spin_slices.value()))
+            else:
+                self._preview.set_slice_by("height")
+                self._preview.set_slice_height(int(self.spin_height.value()))
+
+    def _on_height_changed(self, v: int):
+        if not self._preview:
+            return
+        if getattr(self._preview, "_slice_enabled", False) and self._current_slice_by() == "height":
+            self._preview.set_slice_height(int(v))
     def reset_to_defaults(self):
         defaults = dict(
             slices=8,
+            height_px=2000,
+            slice_by="count",
             show_labels=True,
             auto_threads=True,
             threads=6,
@@ -119,7 +186,10 @@ class CutSection(QWidget):
                 self.spin_threads.valueChanged.disconnect()
         except Exception:
             pass
-
+        if hasattr(self, "spin_height"):
+            self.spin_height.setValue(defaults["height_px"])
+        if hasattr(self, "combo_mode"):
+            self.combo_mode.setCurrentIndex(0 if defaults["slice_by"] == "count" else 1)
         if hasattr(self, "spin_slices"):
             self.spin_slices.setValue(defaults["slices"])
         if hasattr(self, "chk_show_labels"):
@@ -137,6 +207,8 @@ class CutSection(QWidget):
         self._save_bool_ini("show_labels", defaults["show_labels"])
         self._save_bool_ini("auto_threads", defaults["auto_threads"])
         self._save_int_ini("threads", defaults["threads"])
+        self._save_int_ini("height_px", defaults["height_px"])
+        self._save_str_ini("slice_by", defaults["slice_by"])
 
         try:
             if hasattr(self, "chk_auto_threads"):
@@ -178,7 +250,19 @@ class CutSection(QWidget):
             return
         if checked:
             self.btn_toggle.setText("Выкл")
-            self._preview.set_slice_mode(True, self.spin_slices.value())
+            by = self._current_slice_by()
+            if by == "count":
+                self._preview.set_slice_by("count")
+                self._preview.set_slice_mode(True, self.spin_slices.value())
+            else:
+                by = self._current_slice_by()
+                self._preview.set_slice_mode(True)  # 1) включили
+                if by == "count":
+                    self._preview.set_slice_by("count")  # 2) задали режим
+                    self._preview.set_slice_count(self.spin_slices.value())  # 3) параметр
+                else:
+                    self._preview.set_slice_by("height")
+                    self._preview.set_slice_height(self.spin_height.value())
         else:
             self.btn_toggle.setText("Вкл")
             self._preview.set_slice_mode(False)
@@ -190,8 +274,21 @@ class CutSection(QWidget):
             self._preview.set_slice_count(int(v))
 
     def _enable(self):
-        if not self._preview: return
-        self._preview.set_slice_mode(True, self.spin_slices.value())
+        if not self._preview:
+            return
+        by = self._current_slice_by()
+        if by == "count":
+            self._preview.set_slice_by("count")
+            self._preview.set_slice_mode(True, self.spin_slices.value())
+        else:
+            by = self._current_slice_by()
+            self._preview.set_slice_mode(True)
+            if by == "count":
+                self._preview.set_slice_by("count")
+                self._preview.set_slice_count(self.spin_slices.value())
+            else:
+                self._preview.set_slice_by("height")
+                self._preview.set_slice_height(self.spin_height.value())
 
     def _disable(self):
         if not self._preview: return
@@ -234,9 +331,24 @@ class CutSection(QWidget):
         from smithanatool_qt.settings_bind import group, bind_spinbox, bind_checkbox
         with group("CutSection"):
             bind_spinbox(self.spin_slices, "slices", 8)
+            bind_spinbox(self.spin_height, "height_px", 2000)  # ← добавили
             bind_checkbox(self.chk_show_labels, "show_labels", True)
             bind_checkbox(self.chk_auto_threads, "auto_threads", True)
             bind_spinbox(self.spin_threads, "threads", 4)
             self.spin_threads.setEnabled(not self.chk_auto_threads.isChecked())
+
+            # попытаться восстановить режим (если раньше сохраняли self._save_str_ini("slice_by", ...))
+            try:
+                val = getattr(self, "__slice_by__shadow", None)
+                if val:
+                    self.combo_mode.setCurrentIndex(0 if val == "count" else 1)
+            except Exception:
+                pass
+        with group("CutSection"):
+            bind_line_edit(self._slice_by_le, "slice_by", "count")
+
+        by = (self._slice_by_le.text() or "count").strip()
+        self.combo_mode.setCurrentIndex(0 if by == "count" else 1)
+        self._on_mode_changed(self.combo_mode.currentIndex())
 
 

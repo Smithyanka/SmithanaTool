@@ -1,441 +1,162 @@
-# -*- coding: utf-8 -*-
-"""
-DOM-утилиты: прокрутка страницы и сбор URL изображений с учётом минимальной ширины.
-"""
+from __future__ import annotations
+from typing import Optional, Callable
+from pathlib import Path
+import time, json, re
+from playwright.sync_api import sync_playwright
 
-from typing import List
-import re
-
-
-
-def _smart_scroll_legacy(page, max_loops: int = 40, step: int = 3000, pause: float = 0.4) -> None:
-    """
-    Плавно прокручивает страницу вниз, пока высота документа не перестанет расти
-    несколько итераций подряд (или не достигнем max_loops).
-    """
-    import time
-    stable_rounds = 0
-    last_height = page.evaluate("() => document.body.scrollHeight")
-    for _ in range(max_loops):
-        page.mouse.wheel(0, step)
-        time.sleep(pause)
-        new_h = page.evaluate("() => document.body.scrollHeight")
-        if new_h <= last_height:
-            stable_rounds += 1
-        else:
-            stable_rounds = 0
-        last_height = new_h
-        if stable_rounds >= 3:
-            break
-
-def _count_viewer_links(page, title_id: str) -> int:
-    js = f"() => document.querySelectorAll('a[href*=\"/content/{title_id}/viewer/\"]').length"
+def _collect_dom_urls_in_ctx(ctx, url, urls_json_path, log=None, stop_flag=None, pre_action=None, scroll_ms=45000):
+    page = ctx.new_page()
     try:
-        return int(page.evaluate(js))
-    except Exception:
-        return 0
-
-
-
-def reveal_all_chapters(page, title_id: str, on_log=lambda s: None, max_rounds: int = 80, pause: float = 0.6,
-                        prefer: str | None = None, target_nums: list[int] | None = None, stop_on_match: bool = False):
-    """
-    Пытается нажать «показать ещё» (вниз/вверх), пока число ссылок /viewer/ растёт.
-    Работает на странице https://page.kakao.com/content/<title_id>.
-    prefer: 'down' | 'up' | None — приоритет направления кликов.
-    target_nums: список целевых номеров глав; если stop_on_match=True, прекращает раскрытие при появлении цели.
-    """
-    import time
-
-    DOWN_SELECTORS = [
-        "div.flex.cursor-pointer.items-center.justify-center.rounded-b-12pxr.bg-bg-a-20.py-8pxr",
-        "img[alt*='아래']",
-    ]
-    UP_SELECTORS = [
-        "div.flex.items-center.justify-center.bg-bg-a-20.cursor-pointer.mx-15pxr.py-8pxr.border-t-1.border-solid.border-line-20",
-        "img[alt*='위']",
-    ]
-
-    def try_click_any(selectors) -> bool:
-        for sel in (selectors or []):
-            try:
-                loc = page.locator(sel).first
-                if loc and loc.count() > 0:
-                    try:
-                        loc.click(timeout=800)
-                        return True
-                    except Exception:
-                        pass
-            except Exception:
-                continue
-        return False
-
-    def _count() -> int:
-        return _count_viewer_links(page, title_id)
-
-    def _has_target_visible() -> bool:
-        if not target_nums:
-            return False
-        nums = set(int(x) for x in (target_nums or []) if isinstance(x, int) or (isinstance(x, str) and str(x).isdigit()))
+        page.goto(url, wait_until="domcontentloaded")
         try:
-            cur = collect_chapter_map(page, title_id) or []
-            for r in cur:
-                n = r.get('num')
-                if isinstance(n, int) and n in nums:
-                    return True
-            return False
-        except Exception:
-            return False
-
-    # формируем порядок направления
-    pref = (str(prefer).lower() if isinstance(prefer, str) else None)
-    if pref == 'up':
-        orders = (('up', UP_SELECTORS), ('down', DOWN_SELECTORS))
-    elif pref == 'down':
-        orders = (('down', DOWN_SELECTORS), ('up', UP_SELECTORS))
-    else:
-        orders = (('down', DOWN_SELECTORS), ('up', UP_SELECTORS))
-
-    stable = 0
-    last = _count()
-    try: on_log(f"[DEBUG] Найдено ссылок перед раскрытием: {last}")
-    except Exception: pass
-    for _ in range(max_rounds):
-        changed = False
-
-        # ранний выход, если цель уже видна
-        if stop_on_match and _has_target_visible():
-            try: on_log("[AUTO] Целевая глава видна — прекращаю раскрытие.")
-            except Exception: pass
-            break
-
-        # пробуем в предпочитаемом порядке
-        for label, sels in orders:
-            try:
-                if try_click_any(sels):
-                    try: on_log(f"[AUTO] Раскрываю {label}")
-                    except Exception: pass
-                    time.sleep(pause)
-                    # легкий прогрев/скролл
-                    try: smart_scroll(page, max_loops=1, step=2000, pause=pause / 2)
-                    except Exception: pass
-                    cur = _count()
-                    if cur > last:
-                        last = cur
-                        changed = True
-                        break  # в этом раунде хватит
-            except Exception:
-                pass
-
-        # доброскролл до низа — вдруг ленивый догруз
-        try:
-            page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(pause / 2)
-            cur = _count()
-            if cur > last:
-                changed = True
-                last = cur
+            page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
             pass
 
-        if changed:
-            stable = 0
-            try: on_log(f"[DEBUG] Ссылок после раскрытия: {last}")
+        if callable(pre_action):
+            try:
+                ok = pre_action(page)
+                if log: log("[INFO] Попытка использовать тикет: " + ("успех" if ok else "не потребовалась/не найдена"))
+            except Exception as e:
+                if log: log(f"[WARN] Ошибка pre_action: {e}")
+
+        t0, stable_rounds, last_scroll_y = time.time(), 0, -1
+        while True:
+            if stop_flag and stop_flag(): raise RuntimeError("[CANCEL] Остановлено пользователем.")
+            page.evaluate("window.scrollBy(0, Math.floor(window.innerHeight * 0.95))")
+            page.wait_for_timeout(180)
+            try: page.wait_for_load_state("networkidle", timeout=1500)
             except Exception: pass
-        else:
-            stable += 1
-            if stable >= 3:
+            scroll_y = page.evaluate("Math.floor(window.scrollY + window.innerHeight)")
+            stable_rounds = stable_rounds + 1 if scroll_y == last_scroll_y else 0
+            last_scroll_y = scroll_y
+            if (time.time() - t0) * 1000 > scroll_ms and stable_rounds >= 3:
                 break
 
-
-def collect_urls_with_width(page, base_url: str, min_width: int):
-    """
-    Возвращает URL только тех изображений, у которых известная/оценённая ширина >= min_width.
-    Источники: img[src|data-src|srcset], source[srcset], background-image (по ширине элемента).
-    """
-    js = r"""
-    (function(){
-        const abs = (u) => { try { return new URL(u, window.location.href).href } catch(e) { return null } };
-        const out = [];
-
-        // IMG
-        document.querySelectorAll('img').forEach(img => {
-            const rectW = (img.getBoundingClientRect().width || 0) * (window.devicePixelRatio || 1);
-            const natW  = img.naturalWidth || 0;
-            const baseW = Math.max(natW, rectW);
-
-            const add = (url, w) => { if (!url || url.startsWith('data:')) return;
-                                       out.push({url: abs(url), w: w || baseW || 0}); };
-
-            const src = img.getAttribute('src');          if (src)  add(src, baseW);
-            const dsrc = img.getAttribute('data-src') ||
-                         img.getAttribute('data-original'); if (dsrc) add(dsrc, baseW);
-
-            const sset = img.getAttribute('srcset');
-            if (sset) {
-                sset.split(',').forEach(part => {
-                    const bits = part.trim().split(/\s+/);
-                    if (!bits[0]) return;
-                    const u = abs(bits[0]);
-                    let w = 0;
-                    if (bits[1] && /(\d+)w/.test(bits[1])) w = parseInt(RegExp.$1, 10);
-                    out.push({ url: u, w: w || baseW || 0 });
-                });
+        urls = page.evaluate("""() => {
+            const out = new Set();
+            for (const img of Array.from(document.querySelectorAll('img'))) {
+                if (img.currentSrc) out.add(img.currentSrc);
+                if (img.src) out.add(img.src);
+                const ss = img.getAttribute('srcset');
+                if (ss) for (const part of ss.split(',')) { const u = part.trim().split(' ')[0]; if (u) out.add(u); }
             }
-        });
-
-        // SOURCE srcset
-        document.querySelectorAll('source[srcset]').forEach(el => {
-            const rectW = (el.parentElement?.getBoundingClientRect().width || 0) * (window.devicePixelRatio || 1);
-            const sset = el.getAttribute('srcset') || '';
-            sset.split(',').forEach(part => {
-                const bits = part.trim().split(/\s+/);
-                if (!bits[0]) return;
-                const u = abs(bits[0]);
-                let w = 0;
-                if (bits[1] && /(\d+)w/.test(bits[1])) w = parseInt(RegExp.$1, 10);
-                out.push({ url: u, w: w || rectW || 0 });
-            });
-        });
-
-        // background-image (ширина = ширина элемента на экране)
-        document.querySelectorAll('[style*="background-image"]').forEach(el => {
-            const style = el.getAttribute('style') || '';
-            const m = style.match(/background-image\s*:\s*url\((['"]?)([^'")]+)\1\)/i);
-            if (m && m[2]) {
-                const rectW = (el.getBoundingClientRect().width || 0) * (window.devicePixelRatio || 1);
-                out.push({ url: abs(m[2]), w: rectW || 0 });
+            for (const s of Array.from(document.querySelectorAll('source'))) {
+                const ss = s.getAttribute('srcset');
+                if (ss) for (const part of ss.split(',')) { const u = part.trim().split(' ')[0]; if (u) out.add(u); }
+                const src = s.getAttribute('src'); if (src) out.add(src);
             }
-        });
+            for (const el of Array.from(document.querySelectorAll('*'))) {
+                const st = getComputedStyle(el); const bg = (st && st.backgroundImage) || '';
+                const m = Array.from(bg.matchAll(/url\(([^)]+)\)/g));
+                for (const mm of m) { let u = (mm[1] || '').trim().replace(/^['"]|['"]$/g, ''); if (u) out.add(u); }
+            }
+            return Array.from(out);
+        }""")
+        urls_abs = page.evaluate("""(list) => list.map(u => { try { return new URL(u, location.href).href; } catch { return u; } })""", urls)
 
-        // de-dupe: keep max width per URL
-        const map = {};
-        for (const o of out) {
-            if (!o || !o.url) continue;
-            if (!map[o.url] || (o.w||0) > (map[o.url].w||0)) map[o.url] = o;
-        }
-        return Object.values(map);
-    })();
-    """
-    arr = page.evaluate(js)
-
-    # фильтрация по min_width
-    urls, seen = [], set()
-    mw = int(min_width or 0)
-    for obj in (arr or []):
+        with open(urls_json_path, "w", encoding="utf-8") as f:
+            json.dump(urls_abs, f, ensure_ascii=False, indent=0)
+        page.wait_for_timeout(400)
+        if log: log(f"[URLS] Собрано: {len(urls_abs)}")
+    finally:
         try:
-            u = obj.get("url")
-            w = int(obj.get("w") or 0)
+            page.close()
         except Exception:
-            continue
-        if not u or w < mw:
-            continue
-        if u not in seen:
-            seen.add(u)
-            urls.append(u)
-    return urls
+            pass
+from smithanatool_qt.parsers.auth_session import get_session_path
+from .utils import _viewer_url
 
+def _collect_dom_urls(series_id: int, product_id: str | int, *,
+                      out_dir: str, auth_dir: Optional[str] = None,
+                      log: Optional[Callable[[str], None]] = None,
+                      stop_flag: Optional[Callable[[], bool]] = None,
+                      episode_no: int | None = None,
+                      pre_action: Optional[Callable] = None,
+                      scroll_ms: int = 45000,
+                      ctx=None) -> Optional[str]:
+    urls_dir = Path(out_dir or ".") / "cache"  # совместимость с уже существующим путём
+    urls_dir.mkdir(parents=True, exist_ok=True)
+    label = f"{episode_no:04d}" if isinstance(episode_no, int) else f"id_{product_id}"
+    urls_json_path = str(urls_dir / f"{label}_urls.json")
 
-    # фильтрация по min_width и финальная дедупликация
-    urls: List[str] = []
-    seen = set()
-    mw = int(min_width or 0)
-    for obj in (arr or []):
+    state_path = None
+    try:
+        state_path = get_session_path(auth_dir or out_dir)
+    except Exception:
+        state_path = None
+    state_path_str = str(state_path) if state_path and Path(state_path).exists() else None
+    if log:
+        log(f"[DEBUG] Storage state path: {state_path_str or '(нет файла)'}")
+
+    url = _viewer_url(int(series_id), str(product_id))
+
+    # Опционально используем уже созданный контекст (ctx) для ускорения.
+    url = _viewer_url(int(series_id), str(product_id))
+
+    if ctx is not None:
+        _collect_dom_urls_in_ctx(ctx, url, urls_json_path, log=log, stop_flag=stop_flag, pre_action=callable(pre_action) and pre_action, scroll_ms=scroll_ms)
+        return urls_json_path
+
+    # Старый путь: создаём Playwright/браузер/контекст на время одного эпизода
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, channel="msedge")
+        ctx_local = None
         try:
-            u = obj.get("url")
-            w = int(obj.get("w") or 0)
+            ctx_local = browser.new_context(
+                storage_state=state_path_str,
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36",
+                viewport={"width": 1280, "height": 860},
+                locale="ko-KR", timezone_id="Asia/Seoul",
+            )
+            _collect_dom_urls_in_ctx(ctx_local, url, urls_json_path, log=log, stop_flag=stop_flag, pre_action=callable(pre_action) and pre_action, scroll_ms=scroll_ms)
+        finally:
+            try:
+                if ctx_local: ctx_local.close()
+            except Exception:
+                pass
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+    return urls_json_path
+
+
+from playwright.sync_api import TimeoutError as PwTimeoutError
+
+def _try_use_rental_ticket(page, log=None):
+    """
+    Находясь на viewer-странице: кликаем '대여권' / '대여권 사용' и подтверждаем, если появляется диалог.
+    Возвращает True при успехе или если ничего нажимать не нужно; False — если кнопка не найдена/не получилось.
+    """
+    try:
+        # Частые варианты текста кнопок
+        btn = page.get_by_role("button", name=re.compile("대여권")).first
+        if not btn or not btn.is_visible():
+            # запасной способ: любой видимый текст содержащий '대여권'
+            cand = page.locator("text=/.*대여권.*/").first
+            if not cand or not cand.is_visible():
+                return False
+            btn = cand
+        btn.click()
+        # иногда всплывает подтверждение
+        try:
+            confirm = page.get_by_role("button", name=re.compile("확인|사용|예")).first
+            if confirm and confirm.is_visible():
+                confirm.click()
         except Exception:
-            continue
-        if not u or w < mw:
-            continue
-        if u not in seen:
-            seen.add(u)
-            urls.append(u)
-    return urls
+            pass
 
-def smart_scroll(page, max_loops=60, step=3500, pause=0.6):
-    import time
-    stable_rounds = 0
-    last_height = page.evaluate("() => document.body.scrollHeight")
-    for _ in range(max_loops):
-        page.mouse.wheel(0, step)
-        time.sleep(pause)
-        new_h = page.evaluate("() => document.body.scrollHeight")
-        if new_h <= last_height:
-            stable_rounds += 1
-        else:
-            stable_rounds = 0
-        last_height = new_h
-        if stable_rounds >= 3:
-            break
-    # доброскролл в самый низ
-    page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
-    time.sleep(0.8)
+        # ждём, что экспресс-оверлей пропадёт и начнёт грузиться контент
+        try:
+            page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
 
-
-
-def collect_chapter_map(page, title_id: str):
-    """
-    Возвращает список словарей {num:int, id:str, href:str} для всех ссылок вида
-    /content/<title_id>/viewer/<id> на странице https://page.kakao.com/content/<title_id>.
-    Номер берём ТОЛЬКО из подписи формата '<число>화' (напр. '1화', '12 화'), чтобы исключить трейлеры ('1차 ...').
-    """
-    js = rf"""
-    (function() {{
-        const list = [];
-        const links = Array.from(document.querySelectorAll('a[href*="/content/{title_id}/viewer/"]'));
-        for (const a of links) {{
-            const href = a.getAttribute('href') || a.href || '';
-            const m = href && href.match(/\/content\/{title_id}\/viewer\/(\d+)/);
-            if (!m) continue;
-            const vid = m[1];
-
-            // ищем номер главы в тексте ссылки или ближайших предков
-            const grabNum = (el) => {{
-                let cur = el;
-                for (let i=0; i<3 && cur; i++) {{
-                    const t = (cur.textContent || '').replace(/\s+/g,' ').trim();
-                    // ключевое: номер только если рядом есть '화'
-                    const mm = t.match(/(\d+)\s*화/);
-                    if (mm) return parseInt(mm[1], 10);
-                    cur = cur.parentElement;
-                }}
-                return null;
-            }};
-            const num = grabNum(a);
-            list.push({{ num, id: vid, href }});
-        }}
-
-        // de-dupe по id, затем отбрасываем пустые num
-        const seen = new Set();
-        const out = [];
-        for (const r of list) {{
-            if (!r || !r.id) continue;
-            if (seen.has(r.id)) continue;
-            seen.add(r.id);
-            if (typeof r.num === 'number' && !isNaN(r.num)) out.push(r);
-        }}
-        return out;
-    }})();
-    """
-    arr = page.evaluate(js)
-    try:
-        arr.sort(key=lambda r: int(r.get("num", 0)))
-    except Exception:
-        pass
-    return arr
-
-def read_total_chapters(page) -> int | None:
-    """
-    Ищет '전체 <число>' СНАЧАЛА внутри
-      <div class="flex h-44pxr w-full flex-row items-center justify-between bg-bg-a-20 px-18pxr">
-    Если не найдено — пытается подобрать похожие контейнеры (частичные совпадения классов).
-    В крайнем случае — глобальный фолбэк по всей странице.
-    """
-    js = r"""
-    (function() {
-        function extractNumFrom(node) {
-            if (!node) return null;
-            let text = '';
-            try { text = (node.innerText || node.textContent || ''); } catch(e) {}
-            if (!text) return null;
-            const m = text.match(/전체\s*([0-9,]+)/);
-            if (!m) return null;
-            const val = parseInt((m[1] || '').replace(/,/g, ''), 10);
-            return Number.isNaN(val) ? null : val;
-        }
-
-        // 1) Жёсткий селектор с точным списком классов (если классы приходят ровно так)
-        const strictSel = 'div.flex.h-44pxr.w-full.flex-row.items-center.justify-between.bg-bg-a-20.px-18pxr';
-        const strict = Array.from(document.querySelectorAll(strictSel));
-        for (const el of strict) {
-            // Сначала сам контейнер
-            let n = extractNumFrom(el);
-            if (n !== null) return n;
-            // затем дочерние span/div
-            const parts = el.querySelectorAll('span,div');
-            for (const p of parts) {
-                n = extractNumFrom(p);
-                if (n !== null) return n;
-            }
-        }
-
-        // 2) Более гибкие варианты — классы могут идти в другом порядке
-        const looseSels = [
-            // порядок классов может отличаться
-            'div.flex.w-full.flex-row.items-center.justify-between.bg-bg-a-20.px-18pxr',
-            // частичные совпадения
-            'div[class*="h-44pxr"][class*="justify-between"][class*="bg-bg-a-20"][class*="px-18pxr"]',
-            'div[class*="justify-between"][class*="px-18pxr"][class*="bg-bg-a-20"]',
-        ];
-        for (const sel of looseSels) {
-            const els = Array.from(document.querySelectorAll(sel));
-            for (const el of els) {
-                let n = extractNumFrom(el);
-                if (n !== null) return n;
-                const parts = el.querySelectorAll('span,div');
-                for (const p of parts) {
-                    n = extractNumFrom(p);
-                    if (n !== null) return n;
-                }
-            }
-        }
-
-        // 3) Фолбэк — по всей странице (на случай редизайна)
-        return extractNumFrom(document.body);
-    })();
-    """
-    try:
-        return page.evaluate(js)
-    except Exception:
-        return None
-
-
-
-def collect_viewer_links_dom_order(page, title_id: str):
-    """Возвращает массив объектов {id:str, href:str, text:str, num:int|None} в ПОРЯДКЕ DOM."""
-    js = f"""
-    (function() {{
-        const list = [];
-        const links = Array.from(document.querySelectorAll('a[href*="/content/{title_id}/viewer/"]'));
-        const seen = new Set();
-        for (const a of links) {{
-            const href = a.getAttribute('href') || a.href || '';
-            const m = href && href.match(/\\/content\\/{title_id}\\/viewer\\/(\\d+)/);
-            if (!m) continue;
-            const vid = m[1];
-            if (seen.has(vid)) continue;
-            seen.add(vid);
-            let txt = '';
-            try {{ txt = (a.innerText || a.textContent || ''); }} catch(e){{}}
-            let num = null;
-
-            // Попробуем найти "<число>화" в ближайшем окружении
-            const tryGetNumber = (root) => {{
-                if (!root) return null;
-                const t = (root.innerText || root.textContent || '').replace(/\\s+/g,' ').trim();
-                let mm = t.match(/(\\d+)\\s*화/);
-                if (mm) return parseInt(mm[1], 10);
-                return null;
-            }};
-
-            let m2 = tryGetNumber(a);
-            if (m2 === null) {{
-                let p = a.closest('li, article, div');
-                if (p) {{
-                    m2 = tryGetNumber(p);
-                }}
-            }}
-            if (typeof m2 === 'number' && !Number.isNaN(m2)) {{
-                num = m2;
-            }}
-
-            list.push({{ id: vid, href, text: txt, num }});
-        }}
-        return list;
-    }})();
-    """
-    try:
-        return page.evaluate(js)
-    except Exception:
-        return []
+        return True
+    except PwTimeoutError:
+        return False
+    except Exception as e:
+        if log: log(f"[WARN] Не удалось нажать '대여권': {e}")
+        return False

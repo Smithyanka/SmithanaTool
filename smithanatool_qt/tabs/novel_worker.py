@@ -6,7 +6,6 @@ from typing import Optional, Iterable, Callable
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
-from smithanatool_qt.parsers.kakao_novel.runner import run_novel_parser
 from typing import Optional
 
 @dataclass
