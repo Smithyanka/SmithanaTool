@@ -6,7 +6,9 @@ from typing import Optional, Iterable, Callable
 
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 
+from smithanatool_qt.parsers.kakao_novel.runner import run_novel_parser
 from typing import Optional
+
 
 @dataclass
 class NovelParserConfig:
@@ -65,17 +67,23 @@ class NovelParserWorker(QThread):
     def _on_log(self, s: str):
         if not self._browser_closed_seen and self._is_browser_closed_logline(s):
             self._browser_closed_seen = True
+            self._stop_flag_value = True
+            self._stop_event.set()
+            self._resume_event.set()
+            self._purchase_event.set()
+            self._rental_event.set()
             self.error.emit("Браузер был закрыт")
             return
         self.log.emit(str(s))
 
     def _on_need_login(self):
-        # Покажем UI-подсказку и подождём нажатия "Продолжить"
+        # НЕ блокируемся тут — только показываем кнопку
         self._resume_event.clear()
         self.need_login.emit()
-        while not self._stop_flag_value:
-            if self._resume_event.wait(timeout=0.2):
-                break
+
+    def _wait_continue(self) -> bool:
+        # True когда пользователь нажал «Продолжить» ИЛИ нас остановили
+        return self._resume_event.is_set() or self._stop_event.is_set()
 
     def _stop_flag(self) -> bool:
         return self._stop_flag_value or self._stop_event.is_set()
@@ -186,6 +194,7 @@ class NovelParserWorker(QThread):
                 on_confirm_purchase=self._confirm_purchase,
                 on_confirm_use_rental=self._confirm_use_rental,
                 volume_spec=self.cfg.volume_spec,
+                wait_continue=self._wait_continue,
             )
         except Exception as e:
             friendly = self._browser_closed_text_if_any(e)

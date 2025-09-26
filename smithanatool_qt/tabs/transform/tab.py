@@ -19,7 +19,10 @@ class TransformTab(QWidget):
         splitter.addWidget(self.gallery)
         splitter.addWidget(self.preview)
         splitter.addWidget(self.sections)
-        splitter.setSizes([500, 800, 800])
+        splitter.setSizes([500, 900, 700])  # дефолт
+
+        splitter.setProperty("persist_key", "TransformTab/splitter")
+        self.splitter = splitter
 
         lay = QHBoxLayout(self)
         lay.addWidget(splitter)
@@ -47,4 +50,7 @@ class TransformTab(QWidget):
             QMessageBox.information(self, "Сохранено", f"Сохранено: {path}")
         else:
             QMessageBox.warning(self, "Ошибка", "Не удалось сохранить изображение.")
+
+    def reset_layout_to_defaults(self):
+        self.splitter.setSizes([500, 900, 700])
 

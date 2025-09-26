@@ -37,28 +37,71 @@ class MainWindow(QMainWindow):
         "info":          ("_info_tab",         "smithanatool_qt.tabs.info_tab",             "InfoTab",         "Инфо"),
     }
 
+    def _restore_persisted_child_states(self, root: QWidget):
+        """Восстанавливает состояния всех дочерних виджетов с property('persist_key')."""
+        s = self._settings()
+        for w in root.findChildren(QWidget):
+            key = w.property("persist_key")
+            if key and hasattr(w, "restoreState"):
+                val = s.value(key, None)
+                if val is not None:
+                    try:
+                        w.restoreState(val)
+                    except Exception:
+                        pass
+
+    def _save_persisted_child_states(self):
+        """Сохраняет состояния всех виджетов с property('persist_key')."""
+        s = self._settings()
+        for w in self.findChildren(QWidget):
+            key = w.property("persist_key")
+            if key and hasattr(w, "saveState"):
+                try:
+                    s.setValue(key, w.saveState())
+                except Exception:
+                    pass
+        s.sync()
+
     def _reset_window_size(self):
-        # 1) Снять максимизацию/фуллскрин, чтобы resize сработал
         self.setWindowState(Qt.WindowNoState)
 
-        # 2) Стереть сохранённую геометрию из INI, чтобы при следующем запуске была «по умолчанию»
         try:
             s = self._settings()
+            # 1) стереть сохранённую геометрию окна
             s.beginGroup("Window")
-            s.remove("")  # удалить все ключи внутри группы Window
+            s.remove("")
             s.endGroup()
+
+            # 2) стереть сохранённые состояния внутренних панелей (сплиттеров и т.п.)
+            #    сейчас у нас TransformTab -> QSplitter c persist_key "TransformTab/splitter"
+            s.remove("TransformTab")  # удалит всю группу
             s.sync()
         except Exception:
             pass
 
-        # 3) Выставить дефолтный размер и отцентрировать
-        self.resize(1400, 800)  # твой базовый размер «по умолчанию»
+        # 3) вернуть дефолтный размер окна и отцентрировать
+        self.resize(1400, 800)
         scr = self.screen()
         if scr:
             ag = scr.availableGeometry()
             g = self.geometry()
             g.moveCenter(ag.center())
             self.move(g.topLeft())
+
+        # 4) МГНОВЕННО применить дефолтные размеры на уже «реализованных» вкладках
+        try:
+            # только на тех, что уже созданы (realized)
+            for tab in (
+                    getattr(self, "_transform_tab", None),
+                    getattr(self, "_parser_manhwa_tab", None),
+                    getattr(self, "_parser_novel_tab", None),
+                    getattr(self, "_info_tab", None),
+            ):
+                if tab is not None and tab.property("realized") is True:
+                    if hasattr(tab, "reset_layout_to_defaults"):
+                        tab.reset_layout_to_defaults()
+        except Exception:
+            pass
 
     def _realize_active_tab_later(self):
         """Однократно подгружает активную вкладку после старта event loop."""
@@ -115,6 +158,7 @@ class MainWindow(QMainWindow):
             inst = cls(self)
             inst.setProperty("tab_key", key)
             inst.setProperty("realized", True)
+            self._restore_persisted_child_states(inst)
 
             # Подмена БЕЗ генерации currentChanged
             self.tabs.blockSignals(True)
@@ -372,6 +416,10 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        try:
+            self._save_persisted_child_states()
+        except Exception:
+            pass
         try:
             save_window_geometry(self)
         except Exception:

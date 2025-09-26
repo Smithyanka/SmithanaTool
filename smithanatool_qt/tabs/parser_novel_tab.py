@@ -5,10 +5,11 @@ from html import escape as _html_escape
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, QLineEdit, QTextEdit, QPushButton,
     QSplitter, QRadioButton, QButtonGroup, QFileDialog, QMessageBox, QSizePolicy,
-    QGroupBox, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea, QFrame, QSizePolicy
+    QGroupBox, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea, QFrame
 )
 
-from PySide6.QtCore import Qt, Slot, QTimer, QStandardPaths
+from PySide6.QtCore import Qt, Slot, QTimer, QStandardPaths, QRegularExpression
+from PySide6.QtGui import QIntValidator, QRegularExpressionValidator, QValidator
 
 # === INI биндинги ===
 from smithanatool_qt.settings_bind import (
@@ -22,8 +23,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel
 
 from smithanatool_qt.parsers.auth_session import (
-    get_session_path, delete_session
+    get_session_path, delete_session,
 )
+
 class ElidedLabel(QLabel):
     """QLabel, который автоматически укорачивает длинный текст с многоточием.
     По умолчанию — в середине (ElideMiddle). Хранит полный текст в tooltip.
@@ -108,6 +110,31 @@ class ParserNovelTab(QWidget):
         gl.addWidget(self.lbl_vol, row, 0)
         gl.addWidget(self.ed_vol, row, 1, 1, 2); row += 1
 
+        self._rx_int = QRegularExpression(r"^[0-9]+$")
+        self._rx_csv_ints = QRegularExpression(r"^\s*\d+(?:\s*,\s*\d+)*\s*$")
+        self._rx_ranges = QRegularExpression(r"^\s*\d+(?:\s*-\s*\d+)?(?:\s*,\s*\d+(?:\s*-\s*\d+)?)*\s*$")
+
+        self._val_int = QRegularExpressionValidator(self._rx_int, self)
+        self._val_csv_ints = QRegularExpressionValidator(self._rx_csv_ints, self)
+        self._val_ranges = QRegularExpressionValidator(self._rx_ranges, self)
+
+        # ID тайтла — только целое
+        self.ed_title.setValidator(self._val_int)
+        # Том(а) — целые и диапазоны
+        self.ed_vol.setValidator(self._val_ranges)
+
+        # хелпер для проверки валидности (используем в _refresh_run_enabled)
+        def _is_valid(le: QLineEdit) -> bool:
+            v = le.validator()
+            if not v:
+                return bool(le.text().strip())
+            pos = 0
+            state, _, _ = v.validate(le.text(), pos)
+            return state == QValidator.Acceptable
+
+        self._is_valid = _is_valid  # сохранить как метод
+
+
         # Output dir (как в манхве)
         gl.addWidget(QLabel("Папка сохранения:"), row, 0, Qt.AlignLeft)
         self.btn_pick_out = QPushButton("Выбрать папку…")
@@ -119,40 +146,66 @@ class ParserNovelTab(QWidget):
         gl.addLayout(hl, row, 1, 1, 2); row += 1
 
         # RIGHT: log
-        right = QWidget(); vr = QVBoxLayout(right); vr.setContentsMargins(8,8,8,8); vr.setSpacing(8)
+        right = QWidget();
+        vr = QVBoxLayout(right);
+        vr.setContentsMargins(8, 8, 8, 8);
+        vr.setSpacing(8)
         vr.addWidget(QLabel("Лог:"))
-        self.txt_log = QTextEdit(); self.txt_log.setReadOnly(True)
+        self.txt_log = QTextEdit();
+        self.txt_log.setReadOnly(True)
         vr.addWidget(self.txt_log, 1)
-        self.btn_clear = QPushButton("Очистить лог")
-        self.btn_del_sess = QPushButton("Удалить сессию")
 
-        # слева — примечание
+        # --- НОВОЕ: подсказка о сессии как в манхве
+        # --- НОВОЕ: две кнопки справа
+        self.btn_clear = QPushButton("Очистить лог")
+        self.btn_delete_session = QPushButton("Удалить сессию")
+
         self.lbl_session_hint = QLabel(
             "С течением времени срок сессии может истечь.\n"
-            "Если парсер не может открыть страницу главы, то удалите сессию и авторизуйтесь заново."
+            "Если главу не удаётся скачать, то удалите сессию и авторизуйтесь заново."
         )
         self.lbl_session_hint.setWordWrap(True)
         self.lbl_session_hint.setTextFormat(Qt.PlainText)
-        self.lbl_session_hint.setStyleSheet("color: #a9a9a9; font-size: 11px;")
+        self.lbl_session_hint.setStyleSheet("color:#a9a9a9; font-size:11px;")
         self.lbl_session_hint.setMinimumWidth(200)
         self.lbl_session_hint.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-        al = QHBoxLayout();
-        al.setContentsMargins(0, 0, 0, 0);
+        al = QHBoxLayout()
+        al.setContentsMargins(0, 0, 0, 0)
         al.setSpacing(6)
-        al.addWidget(self.lbl_session_hint, 1)  # слева подсказка
+        al.addWidget(self.lbl_session_hint, 1)  # лейбл слева, занимает всё доступное
         al.addStretch(1)
-        al.addWidget(self.btn_del_sess)
+        al.addWidget(self.btn_delete_session)
         al.addWidget(self.btn_clear)
         vr.addLayout(al)
 
+        # Scroll wrapper for left column
         left_scroll = QScrollArea(self)
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setWidget(left)
 
-        splitter.addWidget(left_scroll)
+        # Контейнер слева: скролл + нижний футер
+        left_container = QWidget(self)
+        left_outer = QVBoxLayout(left_container)
+        left_outer.setContentsMargins(0, 0, 0, 0)
+        left_outer.setSpacing(0)
+        left_outer.addWidget(left_scroll, 1)
+
+        # Футер с кнопкой "Сброс настроек" (фиксированная область снизу)
+        left_footer = QHBoxLayout()
+        left_footer.setContentsMargins(8, 6, 8, 8)
+        left_footer.setSpacing(0)
+        self.btn_reset = QPushButton("Сброс настроек")
+        self.btn_reset.setFixedHeight(28)
+        self.btn_reset.setFixedWidth(100)
+        left_footer.addStretch(1)
+        left_footer.addWidget(self.btn_reset)
+        left_outer.addLayout(left_footer)
+
+        # В splitter кладём не scroll, а контейнер
+        splitter.addWidget(left_container)
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -199,17 +252,6 @@ class ParserNovelTab(QWidget):
         gl.addWidget(grp_buy, row, 0, 1, 3);
         row += 1
 
-        # Reset button (right-aligned)
-        self.btn_reset = QPushButton("Сброс настроек")
-        self.btn_reset.setFixedHeight(28)
-        self.btn_reset.setFixedWidth(100)
-        hreset = QHBoxLayout();
-        hreset.setContentsMargins(0, 0, 0, 0);
-        hreset.setSpacing(6)
-        hreset.addStretch(1);
-        hreset.addWidget(self.btn_reset)
-        gl.addLayout(hreset, row, 0, 1, 3);
-        row += 1
 
         # --- Сохранённые ID (банк ID) ---
         self._ids_save_timer = QTimer(self)
@@ -243,7 +285,7 @@ class ParserNovelTab(QWidget):
         self.rb_number.toggled.connect(self._on_mode_toggled)
         self.rb_id.toggled.connect(self._on_mode_toggled)
         self.btn_reset.clicked.connect(self.reset_to_defaults)
-        self.btn_del_sess.clicked.connect(self._delete_session_clicked)
+        self.btn_delete_session.clicked.connect(self._delete_session)
 
         # --- persist line edits to INI on change ---
         self.ed_title.editingFinished.connect(
@@ -256,9 +298,37 @@ class ParserNovelTab(QWidget):
             lambda: self._save_str_ini("volumes", self.ed_vol.text().strip())
         )
 
+        self.ed_title.textChanged.connect(lambda *_: self._refresh_run_enabled())
+        self.ed_spec.textChanged.connect(lambda *_: self._refresh_run_enabled())
+        self.ed_vol.textChanged.connect(lambda *_: self._refresh_run_enabled())
+
         # Применяем настройки после инициализации UI
         QTimer.singleShot(0, self._apply_settings_from_ini)
 
+    @Slot()
+    def _delete_session(self):
+        if not getattr(self, "_out_dir", ""):
+            QMessageBox.information(self, "Удалить сессию",
+                                    "Сначала выберите папку сохранения — там хранится файл сессии kakao_auth.json.")
+            return
+        p = get_session_path(self._out_dir)
+        if not p.exists():
+            QMessageBox.information(self, "Удалить сессию",
+                                    f"Файл сессии не найден:\n{p}")
+            return
+        ans = QMessageBox.question(
+            self, "Подтверждение",
+            f"Удалить файл сессии?\n\n{p}",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if ans == QMessageBox.Yes:
+            ok = delete_session(self._out_dir)
+            if ok:
+                self._append_log(f"[OK] Удалена сессия: {p}")
+                QMessageBox.information(self, "Удалить сессию", "Файл сессии удалён.")
+            else:
+                self._append_log(f"[WARN] Не удалось удалить сессию: {p}")
+                QMessageBox.warning(self, "Удалить сессию", "Не удалось удалить файл сессии.")
     # ---------- UI state ----------
     def reset_to_defaults(self):
         default_mode_idx = 0  # 0=number, 1=id
@@ -307,11 +377,13 @@ class ParserNovelTab(QWidget):
     def _update_mode(self):
         if self.rb_id.isChecked():
             self.lbl_spec.setText("ViewerID:")
-            self.ed_spec.setPlaceholderText("например: 123456789,987654321")
+            self.ed_spec.setPlaceholderText("например: 12801928, 12999192")
+            self.ed_spec.setValidator(self._val_csv_ints)
             self.lbl_vol.setEnabled(False); self.ed_vol.setEnabled(False)
         else:
             self.lbl_spec.setText("Глава/ы:")
             self.ed_spec.setPlaceholderText("например: 1,2,5-7")
+            self.ed_spec.setValidator(self._val_ranges)
             self.lbl_vol.setEnabled(True); self.ed_vol.setEnabled(True)
 
     def _append_log(self, s: str):
@@ -365,7 +437,7 @@ class ParserNovelTab(QWidget):
     def _build_ids_ui(self):
         if self._ids_ui_built:
             return
-        ids_grp = QGroupBox()
+        ids_grp = QGroupBox("Сохранённые ID")
         self._ids_grp = ids_grp
         ids_grp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         ids_v = QVBoxLayout(ids_grp)
@@ -544,57 +616,42 @@ class ParserNovelTab(QWidget):
         except Exception:
             pass
 
-
-
     # ---------- Actions ----------
     @Slot()
-    def _delete_session_clicked(self):
-        if not getattr(self, "_out_dir", ""):
-            QMessageBox.information(self, "Удалить сессию",
-                                    "Сначала выберите папку сохранения — там хранится файл сессии kakao_auth.json.")
-            return
-        p = get_session_path(self._out_dir)
-        if not p.exists():
-            QMessageBox.information(self, "Удалить сессию",
-                                    f"Файл сессии не найден:\n{p}")
-            return
-        ans = QMessageBox.question(
-            self, "Подтверждение",
-            f"Удалить файл сессии?\n\n{p}",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
-        if ans == QMessageBox.Yes:
-            ok = delete_session(self._out_dir)
-            if ok:
-                self._append_log(f"[OK] Удалена сессия: {p}")
-                QMessageBox.information(self, "Удалить сессию", "Файл сессии удалён.")
-            else:
-                self._append_log(f"[WARN] Не удалось удалить сессию: {p}")
-                QMessageBox.warning(self, "Удалить сессию", "Не удалось удалить файл сессии.")
-
-    @Slot()
     def _pick_out(self):
+        # стартовать из последней выбранной папки (или из каталога настроек)
+        start_dir = self._out_dir or self._settings_dir()
+
         dlg = QFileDialog(self, "Выберите папку сохранения")
+
         dlg.setFileMode(QFileDialog.Directory)
+        dlg.setOption(QFileDialog.ShowDirsOnly, True)
+        dlg.setDirectory(start_dir)
+
         if dlg.exec():
             paths = dlg.selectedFiles()
             if paths:
                 self._out_dir = paths[0]
-                # сразу сохраним в INI
-                with group("ParserNovel"):
-                    self.lbl_out.set_full_text(self._out_dir)
-                # Отразим в UI
-                if hasattr(self, "lbl_out"):
-                    self.lbl_out.setText(self._out_dir)
-                    self.lbl_out.setStyleSheet("color:#0a0")
+
+                # ❶ сохраняем в INI
+                self._save_str_ini("out_dir", self._out_dir)
+
+                # ❷ обновляем UI
+                self.lbl_out.set_full_text(self._out_dir)
+                self.lbl_out.setStyleSheet("color:#0a0")
                 self.btn_run.setEnabled(True)
-                if hasattr(self, "btn_open_dir"):
-                    self.btn_open_dir.setEnabled(True)
+                self._refresh_run_enabled()
+                self.btn_open_dir.setEnabled(True)
 
     @Slot()
     def _open_out_dir(self):
-        if self._out_dir:
-            _open_in_explorer(self._out_dir)
+        if not self._out_dir:
+            QMessageBox.information(self, "Папка", "Сначала выберите папку сохранения.")
+            return
+        if not os.path.isdir(self._out_dir):
+            QMessageBox.warning(self, "Папка", f"Каталог не найден:\n{self._out_dir}")
+            return
+        _open_in_explorer(self._out_dir)
 
     def _collect_cfg(self) -> NovelParserConfig:
         mode = "id" if self.rb_id.isChecked() else "number"
@@ -616,6 +673,7 @@ class ParserNovelTab(QWidget):
             return
         cfg = self._collect_cfg()
         self._append_log("[DEBUG] Запуск парсера новелл Kakao.")
+
         self._worker = NovelParserWorker(cfg)
         self._worker.ask_purchase.connect(self._on_ask_purchase)
         self._worker.ask_use_rental.connect(self._on_ask_use_rental)
@@ -630,13 +688,11 @@ class ParserNovelTab(QWidget):
     def _stop(self):
         if self._worker:
             self._worker.stop()
-            self._append_log("[WARN] Остановка по запросу.")
 
     @Slot()
     def _continue(self):
         if self._worker:
             self._worker.continue_after_login()
-            self._append_log("[AUTO] Продолжение после входа.")
 
     def _on_error(self, msg: str):
         self._append_log(f"[ERROR] {msg}")
@@ -651,6 +707,29 @@ class ParserNovelTab(QWidget):
         self.btn_run.setEnabled(not running and bool(self._out_dir))
         self.btn_stop.setEnabled(running)
         self.btn_continue.setEnabled(running)
+
+    def _set_running(self, running: bool):
+        # Запоминаем состояние и пересчитываем доступность кнопок
+        self._is_running = running
+        self.btn_stop.setEnabled(running)
+        self.btn_continue.setEnabled(running)
+        self._refresh_run_enabled()
+
+    def _refresh_run_enabled(self):
+        out_ok = bool(self._out_dir)
+        title_ok = bool(self.ed_title.text().strip())
+        mode_id = self.rb_id.isChecked()
+        spec_txt = self.ed_spec.text().strip()
+        vol_txt = self.ed_vol.text().strip()
+
+        if mode_id:
+            spec_ok = self._is_valid(self.ed_spec)  # ViewerID — список целых
+        else:
+            spec_ok = self._is_valid(self.ed_spec) or self._is_valid(self.ed_vol)  # главы/тома
+
+        enabled = (not getattr(self, "_is_running", False)) and out_ok and title_ok and spec_ok
+        self.btn_run.setEnabled(enabled)
+
 
     def can_close(self) -> bool:
         return self._worker is None
@@ -682,7 +761,7 @@ class ParserNovelTab(QWidget):
         # Отразим пути в подписи (цвет — зелёный если задано)
         self.lbl_out.set_full_text(self._out_dir or "— не выбрано —")
         self.lbl_out.setStyleSheet("color:#080" if self._out_dir else "color:#a00")
-        self.btn_run.setEnabled(bool(self._out_dir))
+        self._refresh_run_enabled()
         self.btn_open_dir.setEnabled(bool(self._out_dir))
 
         # Приведём подписи/плейсхолдеры под выбранный режим
@@ -702,6 +781,7 @@ class ParserNovelTab(QWidget):
         except Exception:
             pass
         self._update_mode()
+        self._refresh_run_enabled()
 
     def _show_purchase_dialog(self, price: int | None, balance: int | None) -> bool:
         price_txt = f"{price} кредитов" if price is not None else "не удалось определить"

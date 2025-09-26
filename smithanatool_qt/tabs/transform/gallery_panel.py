@@ -6,11 +6,12 @@ import os
 from PySide6.QtCore import Qt, QPoint, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QLabel, QPushButton,
-    QAbstractItemView, QMenu, QComboBox, QListWidgetItem
+    QAbstractItemView, QMenu, QComboBox, QListWidgetItem, QFileDialog
 )
 
 from smithanatool_qt.utils import dialogs
 from .common import natural_key, mtime_key, is_image, dedup_keep_order, open_in_explorer
+from smithanatool_qt.settings_bind import group, save_attr_string, bind_attr_string
 
 
 class _RightSelectableList(QListWidget):
@@ -74,6 +75,19 @@ class GalleryPanel(QWidget):
     currentPathChanged = Signal(object)
     saveRequested = Signal()
     saveAsRequested = Signal()
+
+    def _ini_save_str(self, key: str, value: str):
+        shadow_attr = f"__{key}__shadow"
+        setattr(self, shadow_attr, value)
+        with group("GalleryPanel"):
+            save_attr_string(self, shadow_attr, key)
+
+    def _ini_load_str(self, key: str, default: str = "") -> str:
+        shadow_attr = f"__{key}__shadow"
+        setattr(self, shadow_attr, default)
+        with group("GalleryPanel"):
+            bind_attr_string(self, shadow_attr, key, default)
+        return getattr(self, shadow_attr, default)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -154,6 +168,9 @@ class GalleryPanel(QWidget):
 
         self.setAcceptDrops(True)
 
+        self._last_files_dir = self._ini_load_str("last_files_dir", os.path.expanduser("~"))
+        self._last_folder_dir = self._ini_load_str("last_folder_dir", os.path.expanduser("~"))
+
     # ---------- Публичные ----------
     def files(self) -> List[str]:
         return list(self._files)
@@ -199,20 +216,31 @@ class GalleryPanel(QWidget):
 
     # ---------- Ввод ----------
     def _open_files(self):
-        files, _ = dialogs.ask_open_files(
-            self, "Выберите файлы",
+        start_dir = self._last_files_dir or self._last_folder_dir or os.path.expanduser("~")
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Выберите файлы",
+            start_dir,
             "Изображения (*.png *.jpg *.jpeg *.gif *.bmp *.webp *.psd *.psb);;Все файлы (*.*)"
         )
         if files:
+            # запомнить последний каталог выбора файлов
+            self._last_files_dir = os.path.dirname(files[0])
+            self._ini_save_str("last_files_dir", self._last_files_dir)
+
             self._files = dedup_keep_order(self._files + files)
             self._remember_added(files)
             self._apply_sort(refresh=True)
             self.filesChanged.emit(self.files())
 
     def _open_folder(self):
-        folder = dialogs.ask_open_dir(self, "Выберите папку")
+        start_dir = self._last_folder_dir or self._last_files_dir or os.path.expanduser("~")
+        folder = QFileDialog.getExistingDirectory(self, "Выберите папку", start_dir)
         if not folder:
             return
+        self._last_folder_dir = folder
+        self._ini_save_str("last_folder_dir", self._last_folder_dir)
+
         try:
             entries = [os.path.join(folder, name) for name in os.listdir(folder)]
         except Exception:

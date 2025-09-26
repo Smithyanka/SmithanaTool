@@ -15,6 +15,9 @@ from smithanatool_qt.settings_bind import (
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from .converters.any_png import filter_non_psd as filter_any_for_png, convert_any_to_png
+
+
 def _open_in_explorer(path: str):
     try:
         if sys.platform.startswith('win'):
@@ -33,39 +36,110 @@ class ConversionsPanel(QWidget):
         v = QVBoxLayout(self); v.setAlignment(Qt.AlignTop)
 
         # GIF
-        box_gif = QGroupBox("PNG → GIF конвертор"); g = QVBoxLayout(box_gif)
+        box_gif = QGroupBox("GIF конвертор");
+        g = QVBoxLayout(box_gif)
+
+        # Ряд 1: Авто потоки + Потоки
         row_g1 = QHBoxLayout()
-        self.gif_dither = QCheckBox("Дизеринг"); self.gif_dither.setChecked(True); row_g1.addWidget(self.gif_dither)
-        row_g1.addSpacing(12)
-        self.gif_auto_threads = QCheckBox("Авто потоки"); self.gif_auto_threads.setChecked(True); row_g1.addWidget(self.gif_auto_threads)
+        self.gif_auto_threads = QCheckBox("Авто потоки");
+        self.gif_auto_threads.setChecked(True);
+        row_g1.addWidget(self.gif_auto_threads)
         row_g1.addSpacing(12)
         row_g1.addWidget(QLabel("Потоки:"))
-        self.gif_threads = QSpinBox(); self.gif_threads.setRange(1, 32)
-        _default_thr = min(32, max(2, (os.cpu_count() or 4)//2))
+        self.gif_threads = QSpinBox();
+        self.gif_threads.setRange(1, 32)
+        _default_thr = min(32, max(2, (os.cpu_count() or 4) // 2))
         self.gif_threads.setValue(_default_thr)
         row_g1.addWidget(self.gif_threads)
         row_g1.addStretch(1)
         g.addLayout(row_g1)
 
-        row_g2 = QHBoxLayout(); row_g2.addStretch(1); self.btn_gif_convert_sel = QPushButton("Преобразовать выделенные"); self.btn_gif_convert_pick = QPushButton("Выбрать файлы…"); row_g2.addWidget(self.btn_gif_convert_sel); row_g2.addWidget(self.btn_gif_convert_pick); g.addLayout(row_g2)
+        # Ряд 1b: Дизеринг (под потоками)
+        row_g1b = QHBoxLayout()
+        self.gif_dither = QCheckBox("Дизеринг");
+        self.gif_dither.setChecked(True)
+        row_g1b.addWidget(self.gif_dither)
+        row_g1b.addStretch(1)
+        g.addLayout(row_g1b)
 
+        # Ряд 2: кнопки
+        row_g2 = QHBoxLayout();
+        row_g2.addStretch(1)
+        self.btn_gif_convert_sel = QPushButton("Преобразовать выделенные")
+        self.btn_gif_convert_pick = QPushButton("Выбрать файлы…")
+        row_g2.addWidget(self.btn_gif_convert_sel);
+        row_g2.addWidget(self.btn_gif_convert_pick)
+        g.addLayout(row_g2)
         # PDF
-        box_pdf = QGroupBox("PNG → PDF конвертор"); p = QVBoxLayout(box_pdf)
+        box_pdf = QGroupBox("PDF конвертор");
+        p = QVBoxLayout(box_pdf)
+
+        # Ряд 1: Качество + DPI
         row_p1 = QHBoxLayout()
+        row_p1.addWidget(QLabel("Качество JPEG:"))
+        self.pdf_quality = QSpinBox();
+        self.pdf_quality.setRange(10, 100);
+        self.pdf_quality.setValue(92);
+        row_p1.addWidget(self.pdf_quality)
+        row_p1.addSpacing(16)
+        row_p1.addWidget(QLabel("DPI страницы:"))
+        self.pdf_dpi = QSpinBox();
+        self.pdf_dpi.setRange(50, 1200);
+        self.pdf_dpi.setValue(100);
+        row_p1.addWidget(self.pdf_dpi)
+        row_p1.addStretch(1)
+        p.addLayout(row_p1)
 
-        row_p1.addWidget(QLabel("Качество JPEG:")); self.pdf_quality = QSpinBox(); self.pdf_quality.setRange(10, 100); self.pdf_quality.setValue(92); row_p1.addWidget(self.pdf_quality)
-        row_p1.addSpacing(16); row_p1.addWidget(QLabel("DPI страницы:")); self.pdf_dpi = QSpinBox(); self.pdf_dpi.setRange(50, 1200); self.pdf_dpi.setValue(100); row_p1.addWidget(self.pdf_dpi)
-        row_p1.addSpacing(16); self.pdf_one_file = QCheckBox("Один файл"); self.pdf_one_file.setChecked(True); row_p1.addWidget(self.pdf_one_file); row_p1.addStretch(1); p.addLayout(row_p1)
-        row_p2 = QHBoxLayout(); row_p2.addStretch(1); self.btn_pdf_convert_sel = QPushButton("Преобразовать выделенные"); self.btn_pdf_convert_pick = QPushButton("Выбрать файлы…"); row_p2.addWidget(self.btn_pdf_convert_sel); row_p2.addWidget(self.btn_pdf_convert_pick); p.addLayout(row_p2)
+        # Ряд 1b: Один файл (под качеством и DPI)
+        row_p1b = QHBoxLayout()
+        self.pdf_one_file = QCheckBox("Один файл");
+        self.pdf_one_file.setChecked(True)
+        row_p1b.addWidget(self.pdf_one_file)
+        row_p1b.addStretch(1)
+        p.addLayout(row_p1b)
 
+        # Ряд 2: кнопки
+        row_p2 = QHBoxLayout();
+        row_p2.addStretch(1)
+        self.btn_pdf_convert_sel = QPushButton("Преобразовать выделенные")
+        self.btn_pdf_convert_pick = QPushButton("Выбрать файлы…")
+        row_p2.addWidget(self.btn_pdf_convert_sel);
+        row_p2.addWidget(self.btn_pdf_convert_pick)
+        p.addLayout(row_p2)
         # PSD
-        box_psd = QGroupBox("PSD → PNG конвертор"); s = QVBoxLayout(box_psd)
-        row_s1 = QHBoxLayout(); self.psd_replace = QCheckBox("Заменять файлы"); row_s1.addWidget(self.psd_replace); row_s1.addSpacing(12)
-        self.psd_auto_threads = QCheckBox("Авто потоки"); self.psd_auto_threads.setChecked(True); row_s1.addWidget(self.psd_auto_threads); row_s1.addSpacing(12)
-        row_s1.addWidget(QLabel("Потоки:")); self.psd_threads = QSpinBox(); self.psd_threads.setRange(1, 8); self.psd_threads.setValue(8); row_s1.addWidget(self.psd_threads); row_s1.addStretch(1); s.addLayout(row_s1)
-        row_s2 = QHBoxLayout(); row_s2.addWidget(QLabel("Уровень сжатия PNG (0–9):"));
+        box_psd = QGroupBox("PSD → PNG конвертор");
+        s = QVBoxLayout(box_psd)
 
-        self.psd_compress = QSpinBox(); self.psd_compress.setRange(0, 9); self.psd_compress.setValue(7); row_s2.addWidget(self.psd_compress); row_s2.addStretch(1); s.addLayout(row_s2)
+        # Ряд 1: Авто потоки + Потоки
+        row_s1 = QHBoxLayout()
+        self.psd_auto_threads = QCheckBox("Авто потоки");
+        self.psd_auto_threads.setChecked(True);
+        row_s1.addWidget(self.psd_auto_threads)
+        row_s1.addSpacing(12)
+        row_s1.addWidget(QLabel("Потоки:"))
+        self.psd_threads = QSpinBox();
+        self.psd_threads.setRange(1, 8);
+        self.psd_threads.setValue(8);
+        row_s1.addWidget(self.psd_threads)
+        row_s1.addStretch(1)
+        s.addLayout(row_s1)
+
+        # Ряд 1b: Заменять файлы (под потоками)
+        row_s1b = QHBoxLayout()
+        self.psd_replace = QCheckBox("Заменять файлы")
+        row_s1b.addWidget(self.psd_replace)
+        row_s1b.addStretch(1)
+        s.addLayout(row_s1b)
+
+        # Ряд 2: Уровень сжатия
+        row_s2 = QHBoxLayout();
+        row_s2.addWidget(QLabel("Уровень сжатия PNG (0–9):"))
+        self.psd_compress = QSpinBox();
+        self.psd_compress.setRange(0, 9);
+        self.psd_compress.setValue(7);
+        row_s2.addWidget(self.psd_compress)
+        row_s2.addStretch(1);
+        s.addLayout(row_s2)
 
         row_s3 = QHBoxLayout()
         row_s3.addStretch(1)
@@ -84,22 +158,77 @@ class ConversionsPanel(QWidget):
         s.addSpacing(6)
         s.addWidget(self.psd_note)
 
-        v.addWidget(box_gif); v.addWidget(box_pdf); v.addWidget(box_psd); v.addStretch(1)
+        # PNG
+        box_png = QGroupBox("PNG конвертор");
+        n = QVBoxLayout(box_png)
+
+        # Ряд 1: Авто потоки + Потоки
+        row_n1 = QHBoxLayout()
+        self.png_auto_threads = QCheckBox("Авто потоки");
+        self.png_auto_threads.setChecked(True);
+        row_n1.addWidget(self.png_auto_threads)
+        row_n1.addSpacing(12)
+        row_n1.addWidget(QLabel("Потоки:"))
+        self.png_threads = QSpinBox();
+        self.png_threads.setRange(1, 32);
+        _default_thr_png = min(32, max(2, (os.cpu_count() or 4) // 2))
+        self.png_threads.setValue(_default_thr_png);
+        row_n1.addWidget(self.png_threads)
+        row_n1.addStretch(1)
+        n.addLayout(row_n1)
+
+        # Ряд 1b: Заменять файлы (под потоками)
+        row_n1b = QHBoxLayout()
+        self.png_replace = QCheckBox("Заменять файлы")
+        row_n1b.addWidget(self.png_replace)
+        row_n1b.addStretch(1)
+        n.addLayout(row_n1b)
+
+        # Ряд 2: Уровень сжатия PNG
+        row_n2 = QHBoxLayout()
+        row_n2.addWidget(QLabel("Уровень сжатия PNG (0–9):"))
+        self.png_compress = QSpinBox();
+        self.png_compress.setRange(0, 9);
+        self.png_compress.setValue(6);
+        row_n2.addWidget(self.png_compress)
+        row_n2.addStretch(1)
+        n.addLayout(row_n2)
+
+        # Ряд 3: кнопки
+        row_n3 = QHBoxLayout()
+        row_n3.addStretch(1)
+        self.btn_png_convert_sel = QPushButton("Преобразовать выделенные")
+        self.btn_png_convert_pick = QPushButton("Выбрать файлы…")
+        row_n3.addWidget(self.btn_png_convert_sel)
+        row_n3.addWidget(self.btn_png_convert_pick)
+        n.addLayout(row_n3)
+
+        v.addWidget(box_gif); v.addWidget(box_pdf); v.addWidget(box_psd); v.addWidget(box_png); v.addStretch(1)
+
 
         # UI state hooks
         self.psd_auto_threads.toggled.connect(self._apply_psd_threads_state); self._apply_psd_threads_state()
         self.gif_auto_threads.toggled.connect(self._apply_gif_threads_state); self._apply_gif_threads_state()
+        self.png_auto_threads.toggled.connect(self._apply_png_threads_state);
+        self._apply_png_threads_state()
 
         # Actions
         self.btn_gif_convert_sel.clicked.connect(self._gif_convert_selected); self.btn_gif_convert_pick.clicked.connect(self._gif_convert_pick)
         self.btn_pdf_convert_sel.clicked.connect(self._pdf_convert_selected); self.btn_pdf_convert_pick.clicked.connect(self._pdf_convert_pick)
         self.btn_psd_pick.clicked.connect(self._psd_pick_convert)
         self.btn_psd_convert_sel.clicked.connect(self._psd_convert_selected)
+        self.btn_png_convert_sel.clicked.connect(self._png_convert_selected)
+        self.btn_png_convert_pick.clicked.connect(self._png_convert_pick)
 
         # --- persist changes to INI ---
         self.gif_dither.toggled.connect(lambda v: self._save_bool_ini("gif_dither", v))
         self.gif_auto_threads.toggled.connect(lambda v: self._save_bool_ini("gif_auto_threads", v))
         self.gif_threads.valueChanged.connect(lambda v: self._save_int_ini("gif_threads", v))
+
+        self.png_replace.toggled.connect(lambda v: self._save_bool_ini("png_replace", v))
+        self.png_auto_threads.toggled.connect(lambda v: self._save_bool_ini("png_auto_threads", v))
+        self.png_threads.valueChanged.connect(lambda v: self._save_int_ini("png_threads", v))
+        self.png_compress.valueChanged.connect(lambda v: self._save_int_ini("png_compress", v))
 
         self.pdf_quality.valueChanged.connect(lambda v: self._save_int_ini("pdf_quality", v))
         self.pdf_dpi.valueChanged.connect(lambda v: self._save_int_ini("pdf_dpi", v))
@@ -109,8 +238,14 @@ class ConversionsPanel(QWidget):
         self.psd_threads.valueChanged.connect(lambda v: self._save_int_ini("psd_threads", v))
         self.psd_compress.valueChanged.connect(lambda v: self._save_int_ini("psd_compress", v))
 
+
         QTimer.singleShot(0, self._apply_settings_from_ini)
 
+    def _apply_png_threads_state(self):
+        try:
+            self.png_threads.setEnabled(not self.png_auto_threads.isChecked())
+        except Exception:
+            pass
     def reset_to_defaults(self):
         # дефолты
         d = dict(
@@ -125,6 +260,11 @@ class ConversionsPanel(QWidget):
             psd_auto_threads=True,
             psd_threads=8,
             psd_compress=7,
+
+            png_replace=False,
+            png_auto_threads=True,
+            png_threads=min(32, max(2, (os.cpu_count() or 4) // 2)),
+            png_compress=6,
         )
 
         # UI без шумных сигналов, там где надо
@@ -140,6 +280,11 @@ class ConversionsPanel(QWidget):
         self.psd_threads.setValue(d["psd_threads"])
         self.psd_compress.setValue(d["psd_compress"])
 
+        self.png_replace.setChecked(d["png_replace"])
+        self.png_auto_threads.setChecked(d["png_auto_threads"])
+        self.png_threads.setValue(d["png_threads"])
+        self.png_compress.setValue(d["png_compress"])
+
         # сохранить в INI
         self._save_bool_ini("gif_dither", d["gif_dither"])
         self._save_bool_ini("gif_auto_threads", d["gif_auto_threads"])
@@ -152,6 +297,11 @@ class ConversionsPanel(QWidget):
         self._save_bool_ini("psd_auto_threads", d["psd_auto_threads"])
         self._save_int_ini("psd_threads", d["psd_threads"])
         self._save_int_ini("psd_compress", d["psd_compress"])
+
+        self._save_bool_ini("png_replace", d["png_replace"])
+        self._save_bool_ini("png_auto_threads", d["png_auto_threads"])
+        self._save_int_ini("png_threads", d["png_threads"])
+        self._save_int_ini("png_compress", d["png_compress"])
 
         # применить зависимость доступности полей
         self._apply_gif_threads_state()
@@ -171,8 +321,14 @@ class ConversionsPanel(QWidget):
             bind_spinbox(self.psd_threads, "psd_threads", 8)
             bind_spinbox(self.psd_compress, "psd_compress", 7)
 
+            bind_checkbox(self.png_replace, "png_replace", False)
+            bind_checkbox(self.png_auto_threads, "png_auto_threads", True)
+            bind_spinbox(self.png_threads, "png_threads", min(32, max(2, (os.cpu_count() or 4) // 2)))
+            bind_spinbox(self.png_compress, "png_compress", 6)
+
         self._apply_gif_threads_state()
         self._apply_psd_threads_state()
+        self._apply_png_threads_state()
 
     def _save_str_ini(self, key: str, value: str):
         try:
@@ -226,6 +382,105 @@ class ConversionsPanel(QWidget):
         except Exception:
             val = 1
         return max(1, min(32, val))
+
+    def _resolve_png_threads(self) -> int:
+        """Аккуратный авто-подбор потоков, как в других конверторах."""
+        try:
+            cpu = os.cpu_count() or 4
+            return max(2, min(32, cpu // 2))
+        except Exception:
+            return 2
+
+    # PNG (generic)
+    def _png_convert_selected(self):
+        files = self._selected_from_gallery(filter_any_for_png)
+        if not files:
+            QMessageBox.information(self, "PNG конвертор", "Нет подходящих файлов в галерее (PSD/PSB исключены).")
+            return
+        replace = bool(self.png_replace.isChecked())
+        threads = None if self.png_auto_threads.isChecked() else int(self.png_threads.value())
+        compress = int(self.png_compress.value())
+        out_dir = self._ask_out_dir("Папка для PNG")
+        if not out_dir:
+            return
+        self._png_convert(files, out_dir, replace, threads, compress)
+
+    def _png_convert_pick(self):
+        # Разрешаем выбрать любые файлы; PSD/PSB отфильтруем
+        files, _ = QFileDialog.getOpenFileNames(self, "Выберите файлы (все, кроме PSD/PSB)", "", "Все файлы (*.*)")
+        if not files:
+            return
+        files = [f for f in files if not f.lower().endswith(('.psd', '.psb'))]
+        if not files:
+            QMessageBox.information(self, "PNG конвертор", "Все выбранные файлы — PSD/PSB, используйте PSD → PNG.")
+            return
+        out_dir = self._ask_out_dir("Папка для PNG")
+        if not out_dir:
+            return
+        replace = bool(self.png_replace.isChecked())
+        threads = None if self.png_auto_threads.isChecked() else int(self.png_threads.value())
+        compress = int(self.png_compress.value())
+        self._png_convert(files, out_dir, replace, threads, compress)
+
+    def _png_convert(self, files: list[str], out_dir: str, replace: bool, threads: int | None, compress: int):
+        total = len(files)
+        os.makedirs(out_dir or ".", exist_ok=True)
+
+        # Потоки
+        if threads is None:
+            threads = self._resolve_png_threads()
+        threads = max(1, min(32, threads))
+
+        # Подготовка задач
+        tasks = []
+        skipped = 0
+        for src in files:
+            base = os.path.splitext(os.path.basename(src))[0] + ".png"
+            dst = os.path.join(out_dir, base)
+            if (not replace) and os.path.exists(dst):
+                skipped += 1
+                continue
+            tasks.append((src, dst))
+
+        if not tasks:
+            QMessageBox.information(self, "PNG конвертор",
+                                    "Нечего конвертировать (возможно, все выходные файлы уже существуют).")
+            return
+
+        dlg = QProgressDialog("Конвертация в PNG…", None, 0, len(tasks), self)
+        dlg.setWindowTitle("Конвертация")
+        dlg.setWindowModality(Qt.ApplicationModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.show();
+        QApplication.processEvents()
+
+        ok = 0
+        errors: list[str] = []
+
+        def _task(src: str, dst: str):
+            return convert_any_to_png(src, dst, png_compress_level=compress, optimize=False, strip_metadata=True)
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=int(threads)) as ex:
+            futs = [ex.submit(_task, src, dst) for (src, dst) in tasks]
+            for i, fut in enumerate(as_completed(futs), 1):
+                try:
+                    success, msg = fut.result()
+                    if success:
+                        ok += 1
+                    else:
+                        errors.append(f"{os.path.basename(msg) if os.path.isabs(msg) else msg}")
+                except Exception as e:
+                    errors.append(str(e))
+                dlg.setValue(i);
+                QApplication.processEvents()
+
+        dlg.close()
+        self._show_done_box(out_dir, f"→ PNG: успешно {ok}/{len(tasks)}, пропущено {skipped}")
+        if errors:
+            uniq = list(dict.fromkeys(errors))[:5]
+            QMessageBox.warning(self, "PNG конвертор", "Некоторые файлы не сконвертированы:\n" + "\n".join(uniq))
 
     def _show_done_box(self, out_dir: str, message: str):
         box = QMessageBox(self); box.setWindowTitle("Готово"); box.setText(message)

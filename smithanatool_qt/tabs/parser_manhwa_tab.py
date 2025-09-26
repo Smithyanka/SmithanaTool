@@ -8,7 +8,9 @@ from PySide6.QtWidgets import (
     QSplitter, QRadioButton, QButtonGroup, QFileDialog, QGroupBox, QSpinBox, QCheckBox, QMessageBox,
     QSizePolicy, QScrollArea, QFrame, QApplication, QDialog
 )
-from PySide6.QtCore import Qt, Slot, QTimer, QStandardPaths
+from PySide6.QtCore import Qt, Slot, QTimer, QStandardPaths, QRegularExpression
+from PySide6.QtGui import QIntValidator, QRegularExpressionValidator, QValidator
+
 
 from smithanatool_qt.settings_bind import (
     group,
@@ -32,7 +34,7 @@ from smithanatool_qt.parsers.auth_session import (
 from smithanatool_qt.tabs.manhwa.manhwa_tab_elided_label import ElidedLabel
 from smithanatool_qt.tabs.manhwa.manhwa_tab_utils import open_in_explorer, choose_start_dir
 from smithanatool_qt.tabs.manhwa.manhwa_tab_dialogs import show_use_ticket_dialog, show_purchase_ticket_dialog
-from smithanatool_qt.tabs.manhwa.manhwa_tab_ids_bank import IdsBankPanel
+from smithanatool_qt.tabs.manhwa.kakao_tab_ids_bank import IdsBankPanel
 from smithanatool_qt.tabs.manhwa.manhwa_tab_sections import build_auto_stitch_section, build_extra_settings_section, build_right_log_panel, build_footer
 
 
@@ -87,6 +89,27 @@ class ParserManhwaTab(QWidget):
 
         self._spec_before_ui: str = ""
         self._last_mode: Optional[str] = None
+
+        self._rx_int = QRegularExpression(r"^[0-9]+$")
+        self._rx_csv_ints = QRegularExpression(r"^\s*\d+(?:\s*,\s*\d+)*\s*$")
+        self._rx_ranges = QRegularExpression(r"^\s*\d+(?:\s*-\s*\d+)?(?:\s*,\s*\d+(?:\s*-\s*\d+)?)*\s*$")
+
+        self._val_int = QRegularExpressionValidator(self._rx_int, self)
+        self._val_csv_ints = QRegularExpressionValidator(self._rx_csv_ints, self)
+        self._val_ranges = QRegularExpressionValidator(self._rx_ranges, self)
+
+        # ID тайтла — только целое
+        self.ed_title.setValidator(self._val_int)
+
+        def _is_valid(le: QLineEdit) -> bool:
+            v = le.validator()
+            if not v:
+                return bool(le.text().strip())
+            pos = 0
+            state, _, _ = v.validate(le.text(), pos)
+            return state == QValidator.Acceptable
+
+        self._is_valid = _is_valid
 
         # Save dir
         gl.addWidget(QLabel("Папка сохранения:"), row, 0, Qt.AlignLeft)
@@ -209,6 +232,14 @@ class ParserManhwaTab(QWidget):
         self.btn_del_sess.clicked.connect(self._delete_session_clicked)
         self.chk_opt.toggled.connect(self._update_png_controls)
 
+        # Live-валидация для подсветки «Запустить»
+        self.ed_title.textChanged.connect(self._refresh_run_enabled)
+        self.ed_spec.textChanged.connect(self._refresh_run_enabled)
+        self.rb_number.toggled.connect(self._refresh_run_enabled)
+        self.rb_id.toggled.connect(self._refresh_run_enabled)
+        self.rb_index.toggled.connect(self._refresh_run_enabled)
+        self.rb_ui.toggled.connect(self._refresh_run_enabled)
+
         # Persist UI changes to INI
         self.ed_title.editingFinished.connect(
             lambda: self._save_str_ini("title", self.ed_title.text().strip())
@@ -242,8 +273,22 @@ class ParserManhwaTab(QWidget):
         if app:
             app.aboutToQuit.connect(self._abort_if_running)
 
+    def _refresh_run_enabled(self):
+        running = self._worker is not None
+        has_out = bool(self._out_dir)
+        has_title = self._is_valid(self.ed_title)
 
+        mode = (
+            "number" if self.rb_number.isChecked()
+            else "id" if self.rb_id.isChecked()
+            else "index" if self.rb_index.isChecked()
+            else "ui"
+        )
 
+        need_spec = (mode in ("number", "id", "index"))
+        has_spec = (not need_spec) or self._is_valid(self.ed_spec)
+
+        self.btn_run.setEnabled((not running) and has_out and has_title and has_spec)
     # ===== Lifecycle =====
     @Slot()
     def _abort_if_running(self):
@@ -410,7 +455,7 @@ class ParserManhwaTab(QWidget):
             self.lbl_out.set_full_text(d)
             self.lbl_out.setText(d)
             self.lbl_out.setStyleSheet("color:#080")
-            self.btn_run.setEnabled(True)
+            self._refresh_run_enabled()
             self.btn_open_dir.setEnabled(True)
 
     @Slot()
@@ -466,6 +511,7 @@ class ParserManhwaTab(QWidget):
         prev = getattr(self, "_last_mode", None)
 
         if new_mode == "ui":
+            self.ed_spec.setValidator(None)
             if prev != "ui":
                 self._spec_before_ui = self.ed_spec.text()
 
@@ -479,21 +525,25 @@ class ParserManhwaTab(QWidget):
             self.lbl_spec.setEnabled(True)
             self.ed_spec.setEnabled(True)
             if new_mode == "number":
-                self.lbl_spec.setText("Глава(ы):")
+                self.lbl_spec.setText("Глава/ы:")
                 self.ed_spec.setPlaceholderText("например: 1,2,5-7")
+                self.ed_spec.setValidator(self._val_ranges)
             elif new_mode == "id":
                 self.lbl_spec.setText("Viewer ID:")
                 self.ed_spec.setPlaceholderText("например: 12801928, 12999192")
+                self.ed_spec.setValidator(self._val_csv_ints)
             else:  # index
                 self.lbl_spec.setText("Индекс:")
                 self.ed_spec.setPlaceholderText("например: 1,2,5-7")
+                self.ed_spec.setValidator(self._val_ranges)
 
-            # Восстанавливаем текст ТОЛЬКО при выходе из UI и если поле пустое
+                # Восстанавливаем текст ТОЛЬКО при выходе из UI и если поле пустое
             if prev == "ui" and not self.ed_spec.text():
                 self.ed_spec.setText(self._spec_before_ui or "")
 
         # Обновляем «прошлый» режим
         self._last_mode = new_mode
+        self._refresh_run_enabled()
 
     def _on_auto_toggled(self, checked: bool):
         self._save_bool_ini("auto_stitch", checked)
@@ -613,15 +663,15 @@ class ParserManhwaTab(QWidget):
 
     def _on_finished(self):
         self._append_log("[DONE] Парсер завершил работу.")
-        self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.btn_continue.setEnabled(False)
         self._worker = None
+        self._refresh_run_enabled()
 
     def _set_running(self, running: bool):
-        self.btn_run.setEnabled(not running and bool(self._out_dir))
         self.btn_stop.setEnabled(running)
         self.btn_continue.setEnabled(False)
+        self._refresh_run_enabled()
 
     def can_close(self) -> bool:
         return self._worker is None
@@ -675,8 +725,8 @@ class ParserManhwaTab(QWidget):
 
         self.lbl_out.set_full_text(self._out_dir or "— не выбрано —")
         self.lbl_out.setStyleSheet("color:#228B22" if self._out_dir else "color:#B32428")
-        self.btn_run.setEnabled(bool(self._out_dir))
         self.btn_open_dir.setEnabled(bool(self._out_dir))
+
 
         self.lbl_stitch_dir.set_full_text(self._stitch_dir or "— не выбрано —")
         self.lbl_stitch_dir.setStyleSheet("color:#228B22" if self._stitch_dir else "color:#B32428")
@@ -686,3 +736,4 @@ class ParserManhwaTab(QWidget):
         self._update_no_resize()
         self._update_same_dir()
         self._update_png_controls()
+        self._refresh_run_enabled()
