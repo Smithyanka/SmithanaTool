@@ -330,6 +330,16 @@ class ConversionsPanel(QWidget):
         self._apply_psd_threads_state()
         self._apply_png_threads_state()
 
+    def _ini_load_str(self, key: str, default: str = "") -> str:
+        try:
+            shadow_attr = f"__{key}__shadow"
+            setattr(self, shadow_attr, default)
+            with group("ConversionsPanel"):
+                from smithanatool_qt.settings_bind import bind_attr_string  # локальный импорт
+                bind_attr_string(self, shadow_attr, key, default)
+            return getattr(self, shadow_attr, default)
+        except Exception:
+            return default
     def _save_str_ini(self, key: str, value: str):
         try:
             shadow_attr = f"__{key}__shadow"
@@ -354,10 +364,27 @@ class ConversionsPanel(QWidget):
             return filter_func(self._gallery.files())
         return []
 
-    def _ask_out_dir(self, title: str) -> str | None:
-        d = QFileDialog.getExistingDirectory(self, title)
+    def _ask_out_dir(self, title: str, ini_key: str) -> str | None:
+        start_dir = self._ini_load_str(ini_key, os.path.expanduser("~"))
+        d = QFileDialog.getExistingDirectory(self, title, start_dir)
+        if d:
+            self._save_str_ini(ini_key, d)
         return d or None
 
+    def _ask_open_files(self, title: str, ini_key: str, filter_str: str) -> list[str]:
+        start_dir = self._ini_load_str(ini_key, os.path.expanduser("~"))
+        files, _ = QFileDialog.getOpenFileNames(self, title, start_dir, filter_str)
+        if files:
+            self._save_str_ini(ini_key, os.path.dirname(files[0]))
+        return files
+
+    def _ask_save_file(self, title: str, ini_key: str, default_name: str, filter_str: str) -> str | None:
+        start_dir = self._ini_load_str(ini_key, os.path.expanduser("~"))
+        start_path = os.path.join(start_dir, default_name)
+        path, _ = QFileDialog.getSaveFileName(self, title, start_path, filter_str)
+        if path:
+            self._save_str_ini(ini_key, os.path.dirname(path))
+        return path or None
     def _apply_psd_threads_state(self):
         self.psd_threads.setEnabled(not self.psd_auto_threads.isChecked())
 
@@ -400,21 +427,22 @@ class ConversionsPanel(QWidget):
         replace = bool(self.png_replace.isChecked())
         threads = None if self.png_auto_threads.isChecked() else int(self.png_threads.value())
         compress = int(self.png_compress.value())
-        out_dir = self._ask_out_dir("Папка для PNG")
+        out_dir = self._ask_out_dir("Папка для PNG", "png_out_dir")
+
         if not out_dir:
             return
         self._png_convert(files, out_dir, replace, threads, compress)
 
     def _png_convert_pick(self):
         # Разрешаем выбрать любые файлы; PSD/PSB отфильтруем
-        files, _ = QFileDialog.getOpenFileNames(self, "Выберите файлы (все, кроме PSD/PSB)", "", "Все файлы (*.*)")
+        files = self._ask_open_files("Выберите файлы (все, кроме PSD/PSB)", "png_pick_dir", "Все файлы (*.*)")
         if not files:
             return
         files = [f for f in files if not f.lower().endswith(('.psd', '.psb'))]
         if not files:
             QMessageBox.information(self, "PNG конвертор", "Все выбранные файлы — PSD/PSB, используйте PSD → PNG.")
             return
-        out_dir = self._ask_out_dir("Папка для PNG")
+        out_dir = self._ask_out_dir("Папка для PNG", "png_out_dir")
         if not out_dir:
             return
         replace = bool(self.png_replace.isChecked())
@@ -493,15 +521,15 @@ class ConversionsPanel(QWidget):
     def _gif_convert_selected(self):
         files = self._selected_from_gallery(filter_png_for_gif)
         if not files: QMessageBox.information(self, "PNG→GIF", "Нет выбранных картинок в галерее."); return
-        out_dir = self._ask_out_dir("Папка для GIF")
+        out_dir = self._ask_out_dir("Папка для GIF", "gif_out_dir")
         if not out_dir: return
         self._gif_convert(files, out_dir)
 
     def _gif_convert_pick(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Выберите изображения", "",
-                                                "Изображения (*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff *.gif)")
+        files = self._ask_open_files("Выберите изображения", "gif_pick_dir",
+                                     "Изображения (*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff *.gif)")
         if not files: return
-        out_dir = self._ask_out_dir("Папка для GIF")
+        out_dir = self._ask_out_dir("Папка для GIF", "gif_out_dir")
         if not out_dir: return
         self._gif_convert(files, out_dir)
 
@@ -555,24 +583,24 @@ class ConversionsPanel(QWidget):
         files = self._selected_from_gallery(filter_png_for_pdf)
         if not files: QMessageBox.information(self, "PNG→PDF", "Нет выбранных картинок в галерее."); return
         if self.pdf_one_file.isChecked():
-            out_path, _ = QFileDialog.getSaveFileName(self, "Сохранить один PDF как", "images.pdf", "PDF (*.pdf)")
+            out_path = self._ask_save_file("Сохранить один PDF как", "pdf_save_dir", "images.pdf", "PDF (*.pdf)")
             if not out_path: return
             self._pdf_convert_onefile(files, out_path)
         else:
-            out_dir = self._ask_out_dir("Папка для PDF")
+            out_dir = self._ask_out_dir("Папка для PDF", "pdf_out_dir")
             if not out_dir: return
             self._pdf_convert_many(files, out_dir)
 
     def _pdf_convert_pick(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Выберите изображения", "",
-                                                "Изображения (*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff *.gif)")
+        files = self._ask_open_files("Выберите изображения", "pdf_pick_dir",
+                                     "Изображения (*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff *.gif)")
         if not files: return
         if self.pdf_one_file.isChecked():
-            out_path, _ = QFileDialog.getSaveFileName(self, "Сохранить один PDF как", "images.pdf", "PDF (*.pdf)")
+            out_path = self._ask_save_file("Сохранить один PDF как", "pdf_save_dir", "images.pdf", "PDF (*.pdf)")
             if not out_path: return
             self._pdf_convert_onefile(files, out_path)
         else:
-            out_dir = self._ask_out_dir("Папка для PDF")
+            out_dir = self._ask_out_dir("Папка для PDF", "pdf_out_dir")
             if not out_dir: return
             self._pdf_convert_many(files, out_dir)
 
@@ -608,15 +636,12 @@ class ConversionsPanel(QWidget):
         replace = bool(self.psd_replace.isChecked())
         threads = None if self.psd_auto_threads.isChecked() else int(self.psd_threads.value())
         compress = int(self.psd_compress.value())
-
-        out_dir = self._ask_out_dir("Папка для PNG")
-        if not out_dir:
-            return
-
+        out_dir = self._ask_out_dir("Папка для PNG", "psd_out_dir")
+        if not out_dir: return
         self._psd_convert(files, out_dir, replace, threads, compress)
 
     def _psd_pick_convert(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Выберите PSD", "", "PSD/PSB (*.psd *.psb)")
+        files = self._ask_open_files("Выберите PSD", "psd_pick_dir", "PSD/PSB (*.psd *.psb)")
         if not files:
             return
         replace = bool(self.psd_replace.isChecked())
@@ -624,10 +649,8 @@ class ConversionsPanel(QWidget):
         compress = int(self.psd_compress.value())
 
         # ВСЕГДА спрашиваем папку сохранения, даже при включенной замене файлов
-        out_dir = self._ask_out_dir("Папка для PNG")
-        if not out_dir:
-            return
-
+        out_dir = self._ask_out_dir("Папка для PNG", "psd_out_dir")
+        if not out_dir: return
         self._psd_convert(files, out_dir, replace, threads, compress)
 
     def _psd_convert(self, files: list[str], out_dir: str | None, replace: bool, threads: int | None, compress: int):

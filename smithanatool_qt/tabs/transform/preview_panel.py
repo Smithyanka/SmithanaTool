@@ -3,14 +3,14 @@ from typing import Optional, Dict, List, Tuple
 from pathlib import Path
 from .preview.slice_mode import SliceModeMixin
 
-from PySide6.QtCore import Qt, QSize, QPoint, QPointF, QRect
+from PySide6.QtCore import Qt, QSize, QPoint, QPointF, QRect, Signal, QTimer, QEvent
 from PySide6.QtGui import (
     QPixmap, QImage, QPainter, QColor, QPen,
     QShortcut, QKeySequence
 )
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QScrollArea, QSizePolicy, QStyle, QFrame, QFileDialog, QMessageBox
+    QScrollArea, QSizePolicy, QStyle, QFrame, QFileDialog, QMessageBox, QApplication, QToolButton
 )
 
 from psd_tools import PSDImage
@@ -18,7 +18,29 @@ from PIL import Image
 import numpy as np
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import os
+import os, math
+
+_MEM_IMAGES: Dict[str, QImage] = {}
+
+
+def register_memory_image(key: str, img: QImage) -> None:
+    _MEM_IMAGES[key] = img.copy()
+
+
+def unregister_memory_images(paths: list[str]) -> None:
+    for p in paths:
+        _MEM_IMAGES.pop(p, None)
+
+
+def clear_memory_registry() -> None:
+    _MEM_IMAGES.clear()
+
+
+app = QApplication.instance()
+if app and not getattr(QApplication, "_mem_cleanup_connected", False):
+    app.aboutToQuit.connect(clear_memory_registry)
+    QApplication._mem_cleanup_connected = True
+
 
 # -----------------------------------------
 # Внутренний QLabel: панорамирование, зум (через owner), выделение/резайз
@@ -49,7 +71,7 @@ class _PanZoomLabel(QLabel):
             if delta == 0:
                 return
             anchor = e.position().toPoint()
-            factor = 1.1 if delta > 0 else 1/1.1
+            factor = 1.1 if delta > 0 else 1 / 1.1
             self._owner._zoom_by(factor, anchor=anchor)
             e.accept()
         else:
@@ -76,10 +98,12 @@ class _PanZoomLabel(QLabel):
                 if idx is not None:
                     self._owner._drag_boundary_index = idx
                     self.setCursor(Qt.SizeVerCursor)
-                    e.accept(); return
+                    e.accept();
+                    return
                 else:
                     # В режиме нарезки правый клик вне границы — ничего не делаем
-                    e.accept(); return
+                    e.accept();
+                    return
             # Обычный режим одиночного выделения
             if self._owner._press_selection(e.position().toPoint()):
                 e.accept()
@@ -103,7 +127,8 @@ class _PanZoomLabel(QLabel):
             e.accept()
             return
         elif self._owner._slice_enabled and self._owner._drag_boundary_index:
-            self._owner._drag_boundary_to(e.position().toPoint()); e.accept()
+            self._owner._drag_boundary_to(e.position().toPoint());
+            e.accept()
         elif self._owner._sel_active:
             self._owner._update_selection(e.position().toPoint())
             e.accept()
@@ -129,9 +154,11 @@ class _PanZoomLabel(QLabel):
                 self.setCursor(Qt.ArrowCursor)
                 e.accept()
             elif self._owner._sel_active:
-                self._owner._end_selection(e.position().toPoint()); e.accept()
+                self._owner._end_selection(e.position().toPoint());
+                e.accept()
             elif self._owner._resizing_edge:
-                self._owner._end_resize(); e.accept()
+                self._owner._end_resize();
+                e.accept()
         else:
             super().mouseReleaseEvent(e)
 
@@ -232,6 +259,7 @@ class _PanZoomLabel(QLabel):
                 p.drawLine(x0, y0 + y2, x0 + w, y0 + y2)
             p.end()
 
+
 def _qimage_from_pil(pil_img: Image.Image) -> QImage:
     if pil_img.mode not in ("RGBA", "RGB"):
         pil_img = pil_img.convert("RGBA")
@@ -241,18 +269,35 @@ def _qimage_from_pil(pil_img: Image.Image) -> QImage:
     buf = pil_img.tobytes("raw", "RGBA")
     qimg = QImage(buf, w, h, 4 * w, QImage.Format_RGBA8888)
     return qimg.copy()
+
+
 # -----------------------------------------
 # Основная панель предпросмотра
 # -----------------------------------------
 class PreviewPanel(SliceModeMixin, QWidget):
+    saveAsRequested = Signal()
+    dirtyChanged = Signal(str, bool)
+
+    def is_dirty(self, path: str) -> bool:
+        return bool(getattr(self, "_dirty", {}).get(path, False))
+
+    def _set_dirty(self, path: str, value: bool):
+        if not path:
+            return
+        old = self._dirty.get(path, False)
+        self._dirty[path] = bool(value)
+        if old != bool(value):
+            self.dirtyChanged.emit(path, bool(value))
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Кэш изображений и история
         self._images: Dict[str, QImage] = {}
         self._undo: Dict[str, List[QImage]] = {}
         self._redo: Dict[str, List[QImage]] = {}
-        self._clip: List[QImage] = []  # последний вырезанный фрагмент(ы)
+        self._clip: List[QImage] = []
         self._current_path: Optional[str] = None
+        self._scroll_pos: dict[str, tuple[float, float]] = {}
 
         # Зум/Fit
         self._fit_to_window = True
@@ -266,12 +311,17 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self._sel_y2: Optional[int] = None
         self._resizing_edge: Optional[str] = None  # 'top' | 'bottom' | None
 
-        
         # Нарезка (многофрагментный режим)
         self._slice_enabled: bool = False
         self._slice_count: int = 2
         self._slice_bounds: List[int] = []  # границы по оси Y в координатах ИЗОБРАЖЕНИЯ: [0, y1, y2, ..., H]
         self._drag_boundary_index: Optional[int] = None  # индекс внутренней границы, которую двигаем (1..n-1)
+
+        # --- Превью: уровни (только для отображения, не меняет файл) ---
+        self._levels_enabled = False
+        self._levels_black = 0       # 0..254
+        self._levels_gamma = 1.0     # 0.10..5.00
+        self._levels_white = 255     # 1..255
         v = QVBoxLayout(self)
 
         # Верхняя панель действий
@@ -294,17 +344,16 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self.btn_save_as = QPushButton("Сохранить как…")
         row_save.addWidget(self.btn_save)
         row_save.addWidget(self.btn_save_as)
-        row_save.addStretch(1)
+
+        row_save.addStretch(1)  # разделяет левую группу и правую подсказку
+
+        self.lbl_hint = QLabel("Чтобы выделить область, зажмите ПКМ")
+        self.lbl_hint.setWordWrap(False)  # одна строка
+        self.lbl_hint.setStyleSheet("font-size: 12px; color: #666;")
+        row_save.addWidget(self.lbl_hint, 0, Qt.AlignRight | Qt.AlignVCenter)
+
         v.addLayout(row_save)
         v.addSpacing(4)
-
-        help_text = (
-            "Чтобы выделить область, зажмите ПКМ"
-        )
-        lbl = QLabel(help_text);
-        lbl.setWordWrap(True)
-        lbl.setStyleSheet("font-size: 12px; color: #666;")
-        v.addWidget(lbl)
 
         # Область предпросмотра
         self.scroll = QScrollArea()
@@ -315,51 +364,73 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setStyleSheet("QScrollArea{ border-left: 1px solid #d9d9d9; }")
 
-
         self.label = _PanZoomLabel(self, "Предпросмотр")
         self.label.setAlignment(Qt.AlignCenter)
         self.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.label.setMinimumSize(QSize(200, 200))
         self.label.attach_scroll(self.scroll)
         self.scroll.setWidget(self.label)
+
+        # --- ТОСТ-ЛЕЙБЛ (в левом нижнем углу viewport)
+        self._toast = QLabel(self.scroll.viewport())
+        self._toast.setObjectName("preview_toast")
+        self._toast.setStyleSheet(
+            "#preview_toast {"
+            " background: rgba(0,0,0,160); color: white;"
+            " padding: 4px 10px; border-radius: 8px;"
+            " font-size: 12px;"
+            "}"
+        )
+        self._toast.hide()
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self._toast.hide)
+
+        # чтобы позиционировать тост при ресайзе viewport
+        self.scroll.viewport().installEventFilter(self)
+
         h = QHBoxLayout()
         h.setContentsMargins(0, 0, 0, 0)  # 10px отступ слева
         h.addWidget(self.scroll)
         v.addLayout(h)
 
-
         # Панель зума/режимов
-        row = QHBoxLayout()
-        self.btn_zoom_out = QPushButton("−")
-        self.btn_zoom_in = QPushButton("+")
+        controls = QHBoxLayout()
+        controls.setSpacing(6)
+
+        # слева — "Разрешение ..."
+        self.lbl_info = QLabel("—")
+        self.lbl_info.setStyleSheet("color: #666;")
+        controls.addWidget(self.lbl_info)
+
+        # разделяем левую и правую части
+        controls.addStretch(1)
+
+        # справа — все кнопки вплотную друг к другу
+        self.btn_zoom_out = QToolButton();
+        self.btn_zoom_out.setText("−")
+        self.btn_zoom_in = QToolButton();
+        self.btn_zoom_in.setText("+")
+        for b in (self.btn_zoom_out, self.btn_zoom_in):
+            b.setAutoRaise(True)
+            b.setFixedSize(22, 22)
         self.btn_zoom_reset = QPushButton("По ширине")
         self.lbl_zoom = QLabel("100%")
         self.btn_fit = QPushButton("По высоте")
-        self.btn_fit.setCheckable(True)
-        self.btn_fit.setChecked(True)
-        row.addWidget(self.btn_zoom_out)
-        row.addWidget(self.btn_zoom_in)
-        row.addWidget(self.btn_zoom_reset)
-        row.addWidget(self.lbl_zoom)
-        row.addStretch(1)
-        row.addWidget(self.btn_fit)
-        v.addLayout(row)
 
+        controls.addWidget(self.lbl_zoom)
+        controls.addWidget(self.btn_zoom_out)
+        controls.addWidget(self.btn_zoom_in)
+        controls.addWidget(self.btn_zoom_reset)
+        controls.addWidget(self.btn_fit)
 
-        # Инфобар размеров
-        info_row = QHBoxLayout()
-        self.lbl_info = QLabel("—")
-        self.lbl_info.setStyleSheet("color: #666;")
-        info_row.addWidget(self.lbl_info)
-        info_row.addStretch(1)
-        v.addLayout(info_row)
-
+        v.addLayout(controls)
 
         # Соединения
         self.btn_zoom_in.clicked.connect(lambda: self._zoom_by(1.1))
-        self.btn_zoom_out.clicked.connect(lambda: self._zoom_by(1/1.1))
+        self.btn_zoom_out.clicked.connect(lambda: self._zoom_by(1 / 1.1))
         self.btn_zoom_reset.clicked.connect(self._zoom_reset)
-        self.btn_fit.toggled.connect(self._apply_fit_mode)
+        self.btn_fit.clicked.connect(lambda: self._set_fit(True))
 
         self.btn_cut.clicked.connect(self._cut_selection)
         self.btn_paste_top.clicked.connect(lambda: self._paste_fragment(at_top=True))
@@ -372,14 +443,171 @@ class PreviewPanel(SliceModeMixin, QWidget):
         QShortcut(QKeySequence('Ctrl+Z'), self, activated=self._undo_last)
         QShortcut(QKeySequence('Ctrl+Shift+Z'), self, activated=self._redo_last)
         QShortcut(QKeySequence('Ctrl+Y'), self, activated=self._redo_last)
+        QShortcut(QKeySequence('Ctrl+C'), self, activated=self._copy_selection)
 
         self._update_zoom_controls_enabled()
         self._update_actions_enabled()
         self._update_info_label()
 
+    def _remember_scroll(self, path: str | None):
+        if not path:
+            return
+        pm = self.label.pixmap()
+        if not pm:
+            return
+        vp = self.scroll.viewport()
+        hbar = self.scroll.horizontalScrollBar()
+        vbar = self.scroll.verticalScrollBar()
+        cx = hbar.value() + vp.width() / 2
+        cy = vbar.value() + vp.height() / 2
+        self._scroll_pos[path] = (
+            cx / max(1, pm.width()),
+            cy / max(1, pm.height()),
+        )
+
+    def _restore_scroll(self, path: str | None):
+        if not path or path not in self._scroll_pos:
+            return
+        pm = self.label.pixmap()
+        if not pm:
+            return
+        vp = self.scroll.viewport()
+        hbar = self.scroll.horizontalScrollBar()
+        vbar = self.scroll.verticalScrollBar()
+        rx, ry = self._scroll_pos[path]
+        new_x = int(rx * pm.width() - vp.width() / 2)
+        new_y = int(ry * pm.height() - vp.height() / 2)
+        hbar.setValue(max(0, min(hbar.maximum(), new_x)))
+        vbar.setValue(max(0, min(vbar.maximum(), new_y)))
+
+    def _recalc_dirty_vs_disk(self, path: str | None = None):
+        p = path or self._current_path
+        if not p:
+            return
+        base = self._loaded_from_disk.get(p)
+        cur = self._images.get(p)
+        if base is None or cur is None:
+            return
+        # QImage == сравнивает содержимое, размеры и формат
+        self._set_dirty(p, not (cur == base))
+
+    def forget_paths(self, paths: list[str]) -> None:
+        """Полностью убрать пути из внутренних кэшей превью."""
+        if not paths:
+            return
+        # Если удаляем текущий — сбросить предпросмотр
+        if getattr(self, "_current_path", None) in paths:
+            self._current_path = None
+            try:
+                self.label.setText("Предпросмотр")
+            except Exception:
+                pass
+
+        # Чистим все связанные структуры
+        for p in paths:
+            # снять звёздочку, если была
+            try:
+                if getattr(self, "_dirty", {}).get(p, False):
+                    self.dirtyChanged.emit(p, False)
+            except Exception:
+                pass
+            if hasattr(self, "_images"):            self._images.pop(p, None)
+            if hasattr(self, "_undo"):              self._undo.pop(p, None)
+            if hasattr(self, "_redo"):              self._redo.pop(p, None)
+            if hasattr(self, "_loaded_from_disk"):  self._loaded_from_disk.pop(p, None)
+            if hasattr(self, "_dirty"):             self._dirty.pop(p, None)
+            if hasattr(self, "_scroll_pos"):         self._scroll_pos.pop(p, None)
+
+        # Обновить кнопки/инфо
+        try:
+            self._update_actions_enabled()
+            self._update_info_label()
+            self.label.update()
+        except Exception:
+            pass
+
+    def show_toast(self, text: str, ms: int = 3000):
+        """Показать короткое сообщение поверх превью (левый нижний угол) на ms мс."""
+        self._toast.setText(text)
+        self._toast.adjustSize()
+        self._position_toast()
+        self._toast.show()
+        self._toast.raise_()
+        self._toast_timer.start(int(ms))
+
+    def _position_toast(self):
+        if not hasattr(self, "_toast"):
+            return
+        vp = self.scroll.viewport()
+        if not vp:
+            return
+        margin = 8
+        x = margin
+        y = vp.height() - self._toast.height() - margin
+        if y < margin:
+            y = margin
+        self._toast.move(x, y)
+
+    def eventFilter(self, obj, event):
+        # репозиция при ресайзе viewport
+        if obj is self.scroll.viewport() and event.type() == QEvent.Resize:
+            try:
+                self._position_toast()
+            except Exception:
+                pass
+        return super().eventFilter(obj, event)
+
+    def _is_memory_path(self, path: Optional[str]) -> bool:
+        return bool(path and str(path).startswith("mem://"))
+
+    def _is_pasted_temp_path(self, path: str | None) -> bool:
+        if not path:
+            return False
+        try:
+            p = Path(path)
+            return p.parent.name.lower() == "pasted" and p.name.lower().startswith("pasted_")
+        except Exception:
+            return False
+
     # ---------- Публичный API ----------
+    # ---------- Превью уровней ----------
+    def set_levels_preview(self, black: int, gamma: float, white: int):
+        """Включить/обновить превью уровней. Не сохраняет изменения в файл."""
+        try:
+            b = max(0, min(254, int(black)))
+        except Exception:
+            b = 0
+        try:
+            w = max(1, min(255, int(white)))
+        except Exception:
+            w = 255
+        if w <= b:
+            if b >= 254:
+                b = 254; w = 255
+            else:
+                w = b + 1
+        try:
+            g = float(gamma)
+        except Exception:
+            g = 1.0
+        g = max(0.10, min(5.00, g))
+
+        changed = (b != self._levels_black) or (abs(g - self._levels_gamma) > 1e-6) or (w != self._levels_white) or (not self._levels_enabled)
+        self._levels_black, self._levels_gamma, self._levels_white = b, g, w
+        self._levels_enabled = not (b == 0 and abs(g - 1.0) < 1e-6 and w == 255)
+        if changed:
+            self._update_preview_pixmap()
+
+    def reset_levels_preview(self):
+        self._levels_enabled = False
+        self._levels_black = 0
+        self._levels_gamma = 1.0
+        self._levels_white = 255
+        self._update_preview_pixmap()
+
     def _is_current_psd(self) -> bool:
-        return bool(self._current_path and os.path.splitext(self._current_path)[1].lower() == ".psd")
+        ext = os.path.splitext(self._current_path or "")[1].lower()
+        return ext in (".psd", ".psb")
 
     def set_slice_mode(self, on: bool, count: Optional[int] = None):
         self._slice_enabled = bool(on)
@@ -415,12 +643,13 @@ class PreviewPanel(SliceModeMixin, QWidget):
             threads = max(2, min(8, cpu))  # не перегружаем диск
 
         tasks = []
+
         def _save_one(i: int, y1: int, y2: int) -> bool:
             cut_h = max(1, y2 - y1)
             frag = img.copy(0, y1, w, cut_h)  # локальная копия для потока
             # имена вида: <basename>_s01.png
             base = os.path.splitext(os.path.basename(self._current_path))[0]
-            dst = os.path.join(out_dir, f"{base}_{str(i+1).zfill(2)}.png")
+            dst = os.path.join(out_dir, f"{base}_{str(i + 1).zfill(2)}.png")
             return bool(frag.save(dst))
 
         with ThreadPoolExecutor(max_workers=int(threads)) as ex:
@@ -509,6 +738,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         y_img = max(lo, min(hi, y_img))
         self._slice_bounds[i] = y_img
         self.label.update()
+
     def discard_changes(self, path: Optional[str] = None):
         """Вернуть картинку(и) к состоянию с диска без записи на диск."""
         paths = [path] if path else list(self._images.keys())
@@ -518,53 +748,36 @@ class PreviewPanel(SliceModeMixin, QWidget):
                 self._images[p] = base.copy()
                 self._undo[p] = []
                 self._redo[p] = []
-                self._dirty[p] = False
+                self._set_dirty(p, False)
         self._update_preview_pixmap()
         self._update_actions_enabled()
 
     def has_unsaved_changes(self) -> bool:
-        return any(self._dirty.values())
+        return any(getattr(self, "_dirty", {}).values())
 
     def _on_save(self):
-        """Сохранить в исходный файл."""
+        """Сохранить в исходный файл (или, если из буфера, открыть диалог сохранения)."""
         if self._is_current_psd():
             QMessageBox.information(self, "Сохранение недоступно", "Для сохранения перейдите в секцию конвертации.")
             return
+        if self._is_memory_path(self._current_path) or self._is_pasted_temp_path(self._current_path):
+            self.saveAsRequested.emit()
+            return
+
+        if self._is_memory_path(self._current_path) or self._is_pasted_temp_path(self._current_path):
+            self._on_save_as()
+            return
+
         ok = self.save_current_overwrite()
         if ok and self._current_path:
-            # обновляем базу и сбрасываем флаг грязности
             self._loaded_from_disk[self._current_path] = self._images[self._current_path].copy()
             self._dirty[self._current_path] = False
 
-    def _on_save_as(self):
-        """Сохранить как… (без добавления в галерею и без смены текущего файла)."""
-        if not (self._current_path and self._current_path in self._images):
-            return
-        if self._is_current_psd():
-            QMessageBox.information(self, "Сохранение недоступно","Для сохранения перейдите в секцию конвертации.")
-        return
-
-        # Предложим текущее имя как базовое
-        start_path = self._current_path
-
-        # Открываем диалог ОДИН раз
-        target, _ = QFileDialog.getSaveFileName(
-            self,
-            "Сохранить как…",
-            start_path,
-            "Изображения (*.png *.jpg *.jpeg *.bmp *.webp);;Все файлы (*.*)"
-        )
-        if not target:
-            return
-
-        # Пишем на диск из текущего изображения
-        ok = self.save_current_as(target)
-        if not ok:
-            # По желанию покажи ошибку
-            # QMessageBox.warning(self, "Сохранение", "Не удалось сохранить файл.")
-            return
-
     def show_path(self, path: Optional[str]):
+        prev = getattr(self, "_current_path", None)
+        if prev:
+            self._remember_scroll(prev)
+
         self._current_path = path
         self._clear_selection()
 
@@ -581,22 +794,26 @@ class PreviewPanel(SliceModeMixin, QWidget):
         if img is not None:
             qimg = img
         else:
-            ext = os.path.splitext(path)[1].lower()
-            if ext == ".psd":
-                try:
-                    psd = PSDImage.open(path)
-                    pil = psd.composite()  # сводный вид всех видимых слоёв
-                    qimg = _qimage_from_pil(pil)
-                except Exception:
-                    self.label.setText("Не удалось открыть PSD")
-                    self._update_info_label()
-                    return
+            mem_img = _MEM_IMAGES.get(path)
+            if mem_img is not None:
+                qimg = mem_img
             else:
-                qimg = QImage(path)
-                if qimg.isNull():
-                    self.label.setText("Не удалось открыть изображение")
-                    self._update_info_label()
-                    return
+                ext = os.path.splitext(path)[1].lower()
+                if ext in (".psd", ".psb"):
+                    try:
+                        psd = PSDImage.open(path)
+                        pil = psd.composite()
+                        qimg = _qimage_from_pil(pil)
+                    except Exception:
+                        self.label.setText("Не удалось открыть PSD/PSB")
+                        self._update_info_label()
+                        return
+                else:
+                    qimg = QImage(path)
+                    if qimg.isNull():
+                        self.label.setText("Не удалось открыть изображение")
+                        self._update_info_label()
+                        return
 
         # нормализуем формат, если надо
         if qimg.format() == QImage.Format_Indexed8:
@@ -613,14 +830,21 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self._dirty.setdefault(path, False)
 
         self._update_preview_pixmap()
+        self._restore_scroll(path)
+        self._update_actions_enabled()
 
     def save_current_overwrite(self) -> bool:
+        if self._is_memory_path(self._current_path):
+            return False
         if not self._current_path or self._current_path not in self._images:
             return False
         # PSD вообще нельзя сохранять
         if self._is_current_psd():
             return False
         ok = self._images[self._current_path].save(self._current_path)
+        if ok:
+            self._loaded_from_disk[self._current_path] = self._images[self._current_path].copy()
+            self._set_dirty(self._current_path, False)
         return bool(ok)
 
     def save_current_as(self, target_path: str) -> bool:
@@ -630,6 +854,10 @@ class PreviewPanel(SliceModeMixin, QWidget):
         if self._is_current_psd():
             return False
         ok = self._images[self._current_path].save(target_path)
+        if ok:
+            # считаем текущее состояние сохранённым — предупреждения не будет
+            self._loaded_from_disk[self._current_path] = self._images[self._current_path].copy()
+            self._set_dirty(self._current_path, False)
         return bool(ok)
 
     # ---------- Служебные ----------
@@ -637,27 +865,40 @@ class PreviewPanel(SliceModeMixin, QWidget):
         super().resizeEvent(e)
         if self._current_path and self._current_path in self._images:
             self._update_preview_pixmap()
+        # поддержим корректную позицию тоста при изменении размеров панели
+        try:
+            self._position_toast()
+        except Exception:
+            pass
 
     # ---------- Зум/Fit ----------
-    def _set_fit(self, fit: bool):
+    def _set_fit(self, fit: bool, *, update: bool = True):
         self.btn_fit.setChecked(fit)
-        self._apply_fit_mode(fit)
+        self._apply_fit_mode(fit, update=update)
 
-    def _apply_fit_mode(self, on: bool):
+    def _apply_fit_mode(self, on: bool, *, update: bool = True):
         self._fit_to_window = on
         self.scroll.setWidgetResizable(on)
         self.label.setSizePolicy(QSizePolicy.Ignored if on else QSizePolicy.Fixed,
                                  QSizePolicy.Ignored if on else QSizePolicy.Fixed)
         self.scroll.setAlignment(Qt.AlignCenter if on else Qt.AlignLeft | Qt.AlignTop)
         self._update_zoom_controls_enabled()
-        self._update_preview_pixmap()
+        if update:
+            self._update_preview_pixmap()
+
+    def _fit_window_zoom(self) -> float:
+        if not (self._current_path and self._current_path in self._images):
+            return 1.0
+        img = self._images[self._current_path]
+        vp = self.scroll.viewport()
+        vp_w = max(1, vp.width() - 2)
+        vp_h = max(1, vp.height() - 2)
+        z = min(vp_w / max(1, img.width()), vp_h / max(1, img.height()))
+        return max(self._min_zoom, min(self._max_zoom, z))
 
     def _update_zoom_controls_enabled(self):
-        manual = not self._fit_to_window
-        self.btn_zoom_in.setEnabled(manual)
-        self.btn_zoom_out.setEnabled(manual)
-        self.btn_zoom_reset.setEnabled(True)  # всегда доступна
-        self.lbl_zoom.setEnabled(True)
+        for w in (self.btn_zoom_in, self.btn_zoom_out, self.btn_zoom_reset, self.btn_fit, self.lbl_zoom):
+            w.setEnabled(True)
 
     def _fit_width_zoom(self) -> float:
         if not (self._current_path and self._current_path in self._images):
@@ -686,10 +927,15 @@ class PreviewPanel(SliceModeMixin, QWidget):
 
     def _zoom_by(self, factor: float, anchor: QPoint | None = None):
         if self._fit_to_window:
-            self._set_fit(False)
-        self._zoom_set(self._zoom * float(factor), anchor=anchor)
+            base = self._fit_window_zoom()  # фактический зум "По высоте/ширине"
+            self._set_fit(False, update=False)  # тихо выходим из fit, без лишней перерисовки
+            self._zoom_set(base * float(factor), anchor=anchor)
+        else:
+            self._zoom_set(self._zoom * float(factor), anchor=anchor)
 
     def _zoom_reset(self):
+        if not (self._current_path and self._current_path in self._images):
+            return
         self._set_fit(False)
         self._zoom_set(self._fit_width_zoom())
 
@@ -706,12 +952,51 @@ class PreviewPanel(SliceModeMixin, QWidget):
         ow, oh = img.width(), img.height()
         sel_txt = ""
         if self._has_selection():
-            sel_px = abs(int(self._sel_y2) - int(self._sel_y1))
+            sel_px = max(0, int(math.ceil(self._sel_y2) - math.floor(self._sel_y1)))
             sel_txt = f" • Выделение: {sel_px}px"
         self.lbl_info.setText(f"Разрешение: {ow}×{oh}px{sel_txt}")
 
+    def _apply_levels_to_qimage(self, qimg: QImage) -> QImage:
+        """Возвращает новую QImage с применёнными уровнями (к RGB-каналам).
+        Реализация совместима с PySide6: QImage.bits() -> memoryview (без setsize).
+        """
+        if not self._levels_enabled:
+            return qimg
 
+        b = int(self._levels_black)
+        w = int(self._levels_white)
+        g = float(self._levels_gamma)
+        if w <= b:
+            return qimg
 
+        img = qimg if qimg.format() == QImage.Format_RGBA8888 else qimg.convertToFormat(QImage.Format_RGBA8888)
+
+        w_img = img.width()
+        h_img = img.height()
+        bpl = img.bytesPerLine()
+
+        # PySide6: bits() возвращает memoryview, уже с нужным размером
+        ptr = img.bits()
+        buf = np.frombuffer(ptr, dtype=np.uint8)
+
+        # приводим к (h, bytesPerLine), режем до видимой ширины и представляем как RGBA
+        buf = buf[:h_img * bpl].reshape(h_img, bpl)
+        arr = buf[:, : w_img * 4].reshape(h_img, w_img, 4)
+
+        # LUT: y = 255 * ((x-b)/(w-b)) ** gamma
+        rng = max(1, w - b)
+        x = np.arange(256, dtype=np.float32)
+        u = (x - b) / float(rng)
+        u = np.clip(u, 0.0, 1.0)
+        y = np.power(u, g) * 255.0
+        lut = np.clip(y + 0.5, 0, 255).astype(np.uint8)
+
+        # применяем к RGB (альфу не трогаем)
+        arr[..., :3] = lut[arr[..., :3]]
+
+        # возвращаем копию безопасным stride (w*4)
+        out = QImage(arr.tobytes(), w_img, h_img, w_img * 4, QImage.Format_RGBA8888)
+        return out.copy()
     def _update_preview_pixmap(self, anchor: QPoint | None = None, old_zoom: float | None = None):
         if not (self._current_path and self._current_path in self._images):
             self._update_info_label()
@@ -721,6 +1006,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         if self._fit_to_window:
             avail = self.scroll.viewport().size() - QSize(2, 2)
             scaled = img.scaled(avail, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled = self._apply_levels_to_qimage(scaled)
             self.label.setPixmap(QPixmap.fromImage(scaled))
             if img.width() and img.height():
                 eff = min(scaled.width() / img.width(), scaled.height() / img.height())
@@ -733,6 +1019,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
             old_h = old_pix.height() if old_pix else img.height()
 
             scaled = img.scaled(QSize(target_w, target_h), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled = self._apply_levels_to_qimage(scaled)
             self.label.setPixmap(QPixmap.fromImage(scaled))
             try:
                 self.label.resize(scaled.size())
@@ -742,7 +1029,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
 
             vp = self.scroll.viewport().size()
             align = 0
-            align |= int(Qt.AlignHCenter) if scaled.width()  <= vp.width()  else int(Qt.AlignLeft)
+            align |= int(Qt.AlignHCenter) if scaled.width() <= vp.width() else int(Qt.AlignLeft)
             align |= int(Qt.AlignVCenter) if scaled.height() <= vp.height() else int(Qt.AlignTop)
             self.scroll.setAlignment(Qt.Alignment(align))
 
@@ -754,7 +1041,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
                     vbar = self.scroll.verticalScrollBar()
                     rx = anchor.x() / max(1, old_w)
                     ry = anchor.y() / max(1, old_h)
-                    new_x = int(rx * scaled.width()  - self.scroll.viewport().width()  / 2)
+                    new_x = int(rx * scaled.width() - self.scroll.viewport().width() / 2)
                     new_y = int(ry * scaled.height() - self.scroll.viewport().height() / 2)
                     hbar.setValue(max(0, min(hbar.maximum(), new_x)))
                     vbar.setValue(max(0, min(vbar.maximum(), new_y)))
@@ -780,16 +1067,32 @@ class PreviewPanel(SliceModeMixin, QWidget):
         return (
             (self._current_path in self._images) if self._current_path else False
         ) and (
-            self._sel_y1 is not None and self._sel_y2 is not None and abs(self._sel_y2 - self._sel_y1) > 0
+                self._sel_y1 is not None and self._sel_y2 is not None and abs(self._sel_y2 - self._sel_y1) > 0
         )
 
+    def _label_to_image_y_edge(self, y_label: int, *, as_top: bool) -> int:
+        pm = self.label.pixmap()
+        if not pm or not (self._current_path and self._current_path in self._images):
+            return 0
+        img = self._images[self._current_path]
+        y0 = self._v_offset_on_label()
+        y_rel = y_label - y0
+        if y_rel <= 0:
+            return 0
+        if y_rel >= pm.height():
+            return img.height()
+        ratio = img.height() / pm.height()
+        if as_top:
+            return int(y_rel * ratio)  # floor
+        else:
+            return min(img.height(), int(math.ceil(y_rel * ratio)))  # ceil
     def _begin_selection(self, pos_label: QPoint):
         if not (self._current_path and self._current_path in self._images):
             return
         self._sel_active = True
-        y = self._label_to_image_y(pos_label.y())
+        y_top = self._label_to_image_y_edge(pos_label.y(), as_top=True)
         h = self._images[self._current_path].height()
-        self._sel_y1 = max(0, min(h, y))
+        self._sel_y1 = max(0, min(h, y_top))
         self._sel_y2 = self._sel_y1
         self.label.update()
         self._update_actions_enabled()
@@ -800,7 +1103,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
             return
         y = self._label_to_image_y(pos_label.y())
         h = self._images[self._current_path].height()
-        self._sel_y2 = max(1, min(h, self._label_to_image_y(pos_label.y())))
+        self._sel_y2 = max(1, min(h, self._label_to_image_y_edge(pos_label.y(), as_top=False)))
         self.label.update()
         self._update_actions_enabled()
         self._update_info_label()
@@ -810,7 +1113,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
             return
         y = self._label_to_image_y(pos_label.y())
         h = self._images[self._current_path].height()
-        self._sel_y2 = max(1, min(h, self._label_to_image_y(pos_label.y())))
+        self._sel_y2 = max(1, min(h, self._label_to_image_y_edge(pos_label.y(), as_top=False)))
         self._sel_active = False
         # Нулевая высота — сброс
         if self._sel_y1 is None or self._sel_y2 is None or abs(self._sel_y2 - self._sel_y1) < 1:
@@ -834,7 +1137,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         pm = self.label.pixmap()
         scaled_h = pm.height()
         y1 = int(self._sel_y1 * scaled_h / max(1, img.height()))
-        y2 = int(self._sel_y2 * scaled_h / max(1, img.height()))
+        y2 = int(math.ceil(self._sel_y2 * scaled_h / max(1, img.height())))
         y1 = max(0, min(scaled_h, y1))
         y2 = max(0, min(scaled_h, y2))
         if y1 > y2:
@@ -914,9 +1217,9 @@ class PreviewPanel(SliceModeMixin, QWidget):
         h = self._images[self._current_path].height()
         y = max(1, min(h, y))
         if self._resizing_edge == 'bottom':
-            self._sel_y2 = y
+            self._sel_y2 = max(1, min(h, self._label_to_image_y_edge(pos_label.y(), as_top=False)))
         elif self._resizing_edge == 'top':
-            self._sel_y1 = max(0, min(h, y))
+            self._sel_y1 = max(0, min(h, self._label_to_image_y_edge(pos_label.y(), as_top=True)))
         self.label.update()
         self._update_actions_enabled()
         self._update_info_label()
@@ -954,6 +1257,37 @@ class PreviewPanel(SliceModeMixin, QWidget):
             y2 = h
         return y1, y2
 
+    def _copy_selection(self):
+        # есть ли изображение и выделение
+        if not (self._current_path and self._current_path in self._images and self._has_selection()):
+            return
+
+        img: QImage = self._images[self._current_path]
+        h, w = img.height(), img.width()
+
+        # нормализуем и «прибиваем» к краям, как в cut
+        y1 = int(self._sel_y1)
+        y2 = int(self._sel_y2)
+        y1, y2 = self._snap_selection_to_edges(h, y1, y2)
+        if y2 <= y1:
+            return
+
+        cut_h = y2 - y1
+        frag = img.copy(0, y1, w, cut_h)
+
+        # во внутренний буфер приложения (для "Вставить в начало/конец")
+        self._clip.append(frag)
+
+        # в системный буфер обмена — как изображение (для вставки в другие программы)
+        try:
+            QApplication.clipboard().setImage(frag)
+        except Exception:
+            pass
+
+        # UI-обратная связь + обновление доступности вставки
+        self.show_toast(f"Скопировано: {w}×{cut_h}px", 1500)
+        self._update_actions_enabled()
+
     def _cut_selection(self):
         if not self._has_selection():
             return
@@ -982,7 +1316,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         p.end()
 
         self._images[self._current_path] = new_img
-        self._dirty[self._current_path] = True
+        self._recalc_dirty_vs_disk()
         self._clear_selection()
         self._update_preview_pixmap()
         self._update_actions_enabled()
@@ -995,7 +1329,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         base = self._images[self._current_path]
         frag = self._clip[-1]
         if frag.width() != base.width():
-            frag = frag.scaled(base.width(), int(frag.height() * (base.width()/frag.width())),
+            frag = frag.scaled(base.width(), int(frag.height() * (base.width() / frag.width())),
                                Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
 
         self._push_undo()
@@ -1014,7 +1348,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         p.end()
 
         self._images[self._current_path] = new_img
-        self._dirty[self._current_path] = True
+        self._set_dirty(self._current_path, True)
         self._update_preview_pixmap()
         self._update_actions_enabled()
 
@@ -1029,6 +1363,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         rd.append(cur)
         prev = st.pop()
         self._images[self._current_path] = prev
+        self._recalc_dirty_vs_disk()
         self._update_preview_pixmap()
         self._update_actions_enabled()
 
@@ -1042,11 +1377,10 @@ class PreviewPanel(SliceModeMixin, QWidget):
         st.append(self._images[self._current_path].copy())
         nxt = rd.pop()
         self._images[self._current_path] = nxt
+        self._recalc_dirty_vs_disk()
         self._update_preview_pixmap()
         self._update_actions_enabled()
-        self._update_actions_enabled()
 
-    
     def _update_actions_enabled(self):
         has_img = self._current_path in self._images if self._current_path else False
         is_psd = self._is_current_psd()
@@ -1056,5 +1390,6 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self.btn_undo.setEnabled(has_img and bool(self._undo.get(self._current_path, [])))
         self.btn_redo.setEnabled(has_img and bool(self._redo.get(self._current_path, [])))
         # Сохранение недоступно для PSD
-        self.btn_save.setEnabled(has_img and not is_psd and bool(self._dirty.get(self._current_path, False)))
-        self.btn_save_as.setEnabled(has_img and not is_psd)
+        save_ok = has_img and not is_psd
+        self.btn_save.setEnabled(save_ok)
+        self.btn_save_as.setEnabled(save_ok)

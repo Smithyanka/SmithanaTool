@@ -7,7 +7,9 @@ def ask_open_files(parent: QWidget, caption: str = "Выберите файлы"
 def ask_open_dir(parent: QWidget, caption: str = "Выберите папку"):
     return QFileDialog.getExistingDirectory(parent, caption)
 
-def ask_save_file(parent: QWidget, caption: str = "Сохранить как", filter: str = "Все файлы (*.*)"):
+def ask_save_file(parent: QWidget, caption: str = "Сохранить как", filter: str = "Все файлы (*.*)", initial_path: str | None = None):
+    if initial_path:
+        return QFileDialog.getSaveFileName(parent, caption, initial_path, filter)
     return QFileDialog.getSaveFileName(parent, caption, filter=filter)
 
 def info(parent: QWidget, title: str, text: str):

@@ -7,8 +7,10 @@ from PySide6.QtCore import Qt
 from smithanatool_qt.widgets.collapsible import CollapsibleSection
 from .sections.stitch_section import StitchSection
 from .sections.cut_section import CutSection
+from .sections.preview_section import PreviewSection
 from .conversions_panel import ConversionsPanel
 from .rename_panel import RenamePanel
+
 
 
 class SectionsPanel(QWidget):
@@ -54,6 +56,10 @@ class SectionsPanel(QWidget):
         self._ren = RenamePanel(gallery)
         self._ren.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         cv.addWidget(CollapsibleSection("Пакетное переименовывание", self._ren, expanded=False))
+
+        # ====== ПРЕВЬЮ ======
+        self._preview_section = PreviewSection(preview)
+        cv.addWidget(CollapsibleSection("Превью", self._preview_section, expanded=False))
 
         # Растяжка внутри скролла — прижать все секции к верху
         cv.addStretch(1)

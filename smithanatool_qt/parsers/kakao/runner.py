@@ -297,7 +297,6 @@ def run_parser(
                 use_it = on_confirm_use_rental(rental_count, own_count, balance, chapter_label) if on_confirm_use_rental else False
                 if not use_it:
                     continue
-                if log: log("[OK] Использую тикет аренды и продолжаю…")
                 def _pre_action(page):
                     return _try_use_rental_ticket(page, log=log)
             else:

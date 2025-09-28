@@ -9,7 +9,11 @@ from pathlib import Path
 
 from smithanatool_qt.tabs.transform import TransformTab
 from smithanatool_qt.tabs.parser_manhwa_tab import ParserManhwaTab
+from smithanatool_qt.tabs.parser_novel_tab import ParserNovelTab
 from smithanatool_qt.tabs.info_tab import InfoTab
+
+
+
 
 from smithanatool_qt.tabs.transform.preview_panel import PreviewPanel
 from smithanatool_qt.settings_bind import restore_window_geometry, save_window_geometry
