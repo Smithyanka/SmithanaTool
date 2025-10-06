@@ -34,6 +34,7 @@ class ParserConfig:
     compress_level: int = 6
     strip_metadata: bool = True
     per: int = 12
+    zeros: int = 2
     auto_confirm_purchase: bool = False
     auto_confirm_use_rental: bool = False
     auto_threads: bool = True
@@ -47,12 +48,12 @@ class ManhwaParserWorker(QObject):
     log = Signal(str)
     started = Signal()
     finished = Signal()
-    need_login = Signal()  # UI should show "press Continue after login"
+    need_login = Signal()
     error = Signal(str)
     ui_pick_required = Signal(int, object)
 
-    ask_purchase = Signal(object, object)  # ch_num, price(int|None)
-    ask_use_rental = Signal(int, int, object, str)  # rental_count, own_count, balance(int|None), chapter_label
+    ask_purchase = Signal(object, object)
+    ask_use_rental = Signal(int, int, object, str)  #
 
     def __init__(self, cfg: ParserConfig):
         super().__init__()
@@ -161,6 +162,7 @@ class ManhwaParserWorker(QObject):
             "enable": True,
             "auto_threads": bool(self.cfg.auto_threads),
             "threads": int(self.cfg.threads),
+            "zeros": int(self.cfg.zeros),
         }
 
     def _is_browser_closed_logline(self, s: str) -> bool:
@@ -186,10 +188,6 @@ class ManhwaParserWorker(QObject):
 
     @staticmethod
     def _browser_closed_text_if_any(err: BaseException) -> Optional[str]:
-        """
-        Распознаём ситуации, когда пользователь закрыл браузер/вкладку вручную
-        (Playwright/Selenium/Chromium). Возвращаем унифицированный текст.
-        """
         s = (str(err) or "")
         s_low = s.lower()
 
@@ -216,8 +214,8 @@ class ManhwaParserWorker(QObject):
             "navigation failed because page was closed",
             "execution context was destroyed",
             "frame was detached",
-            "err_aborted",          # 'net::ERR_ABORTED'
-            "page.goto:",           # часто присутствует в сообщении
+            "err_aborted",
+            "page.goto:",
         ]
 
         if any(n in s_low for n in needles):
@@ -227,7 +225,6 @@ class ManhwaParserWorker(QObject):
     def _run(self):
         self.started.emit()
         try:
-            # Prepare params based on mode
             mode = self.cfg.mode
             title_id = self.cfg.title_id.strip()
             spec = self.cfg.spec_text.strip()
@@ -258,7 +255,6 @@ class ManhwaParserWorker(QObject):
                     self.error.emit("ID тайтла должен быть числом.")
                     return
 
-                # 2) авторизация/сессия в фоне (как в других режимах)
                 self._cookie_raw_cached = None
                 run_parser(
                     title_id=title_id,
@@ -274,12 +270,9 @@ class ManhwaParserWorker(QObject):
                 if self._stop_event.is_set():
                     return
                 if not self._cookie_raw_cached:
-                    # На этом месте мы окажемся, если исключение не было брошено (значит авторизация ок),
-                    # но cookie не передали по какой-то причине — страховка.
                     self.error.emit("Не удалось получить сессию после авторизации.")
                     return
 
-                # 2) список эпизодов уже в воркере (cookie у нас есть)
                 rows = _safe_list_all(sid, "asc", self._cookie_raw_cached, self._on_log, stop_flag=self._stop_flag,
                                       retries=2) or []
                 if self._stop_event.is_set():
@@ -288,7 +281,6 @@ class ManhwaParserWorker(QObject):
                     self.error.emit("Не удалось получить список эпизодов.")
                     return
 
-                # 3) сохранить episode_map.json (как было)
                 try:
                     series_dir = Path(self.cfg.out_dir) / str(sid)
                     cache_dir = series_dir / "cache"
@@ -301,7 +293,6 @@ class ManhwaParserWorker(QObject):
                 except Exception as e:
                     self.log.emit(f"[WARN] Не удалось сохранить карту эпизодов: {e}")
 
-                # 4) запросить у UI выбор глав и дождаться ответа (как у вас)
                 self._ui_pick_event.clear()
                 self._ui_pick_cancelled = False
                 self.ui_pick_required.emit(sid, rows)

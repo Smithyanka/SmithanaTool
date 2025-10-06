@@ -20,6 +20,11 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os, math
 
+from ...theme import BG_ALT, BORDER_DIM, BG_BASE
+
+from smithanatool_qt.settings_bind import group, get_value
+
+
 _MEM_IMAGES: Dict[str, QImage] = {}
 
 
@@ -277,6 +282,8 @@ def _qimage_from_pil(pil_img: Image.Image) -> QImage:
 class PreviewPanel(SliceModeMixin, QWidget):
     saveAsRequested = Signal()
     dirtyChanged = Signal(str, bool)
+    currentPathChanged = Signal(str)
+    sliceCountChanged = Signal(int)
 
     def is_dirty(self, path: str) -> bool:
         return bool(getattr(self, "_dirty", {}).get(path, False))
@@ -317,12 +324,17 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self._slice_bounds: List[int] = []  # границы по оси Y в координатах ИЗОБРАЖЕНИЯ: [0, y1, y2, ..., H]
         self._drag_boundary_index: Optional[int] = None  # индекс внутренней границы, которую двигаем (1..n-1)
 
+        self._slice_by = getattr(self, "_slice_by", "count")  # "count" | "height"
+        self._slice_height_px = getattr(self, "_slice_height_px", 2000)
+        self._slice_state: Dict[str, dict] = {}
+
         # --- Превью: уровни (только для отображения, не меняет файл) ---
         self._levels_enabled = False
         self._levels_black = 0       # 0..254
         self._levels_gamma = 1.0     # 0.10..5.00
         self._levels_white = 255     # 1..255
         v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
 
         # Верхняя панель действий
         actions = QHBoxLayout()
@@ -349,27 +361,29 @@ class PreviewPanel(SliceModeMixin, QWidget):
 
         self.lbl_hint = QLabel("Чтобы выделить область, зажмите ПКМ")
         self.lbl_hint.setWordWrap(False)  # одна строка
-        self.lbl_hint.setStyleSheet("font-size: 12px; color: #666;")
+        self.lbl_hint.setStyleSheet("font-size: 12px; color: #454545;")
         row_save.addWidget(self.lbl_hint, 0, Qt.AlignRight | Qt.AlignVCenter)
 
         v.addLayout(row_save)
-        v.addSpacing(4)
+        v.addSpacing(0)
 
         # Область предпросмотра
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setAlignment(Qt.AlignCenter)  # ты уже задаёшь это
+        self.scroll.setAlignment(Qt.AlignCenter)
         self.scroll.setViewportMargins(0, 0, 0, 0)
 
         self.scroll.setFrameShape(QFrame.NoFrame)
-        self.scroll.setStyleSheet("QScrollArea{ border-left: 1px solid #d9d9d9; }")
 
-        self.label = _PanZoomLabel(self, "Предпросмотр")
+        self.label = _PanZoomLabel(self, "Нет изображения")
         self.label.setAlignment(Qt.AlignCenter)
         self.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.label.setMinimumSize(QSize(200, 200))
         self.label.attach_scroll(self.scroll)
         self.scroll.setWidget(self.label)
+
+        self.scroll.viewport().setStyleSheet(f"background: {BG_BASE.name()};")
+        self.scroll.setStyleSheet(f"QScrollArea{{ border-left: 1px solid {BORDER_DIM.name()}; }}")
 
         # --- ТОСТ-ЛЕЙБЛ (в левом нижнем углу viewport)
         self._toast = QLabel(self.scroll.viewport())
@@ -397,10 +411,11 @@ class PreviewPanel(SliceModeMixin, QWidget):
         # Панель зума/режимов
         controls = QHBoxLayout()
         controls.setSpacing(6)
+        controls.setContentsMargins(0, 5, 0, 0)
 
         # слева — "Разрешение ..."
         self.lbl_info = QLabel("—")
-        self.lbl_info.setStyleSheet("color: #666;")
+        self.lbl_info.setStyleSheet("color: #454545;")
         controls.addWidget(self.lbl_info)
 
         # разделяем левую и правую части
@@ -424,6 +439,8 @@ class PreviewPanel(SliceModeMixin, QWidget):
         controls.addWidget(self.btn_zoom_reset)
         controls.addWidget(self.btn_fit)
 
+
+
         v.addLayout(controls)
 
         # Соединения
@@ -445,9 +462,116 @@ class PreviewPanel(SliceModeMixin, QWidget):
         QShortcut(QKeySequence('Ctrl+Y'), self, activated=self._redo_last)
         QShortcut(QKeySequence('Ctrl+C'), self, activated=self._copy_selection)
 
+
+
         self._update_zoom_controls_enabled()
         self._update_actions_enabled()
         self._update_info_label()
+
+    def set_cut_paste_mode_enabled(self, on: bool) -> None:
+        """Показ/скрытие кнопок вырезки/вставки/undo/redo/сохранения в панели превью."""
+        on = bool(on)
+        for w in (
+                getattr(self, "btn_cut", None),
+                getattr(self, "btn_paste_top", None),
+                getattr(self, "btn_paste_bottom", None),
+                getattr(self, "btn_undo", None),
+                getattr(self, "btn_redo", None),
+                getattr(self, "btn_save", None),
+                getattr(self, "btn_save_as", None),
+                getattr(self, "lbl_hint", None),
+        ):
+            if w is not None:
+                w.setVisible(on)
+
+
+    def _sync_slice_count_and_emit(self):
+        """Синхронизирует _slice_count с текущими границами и эмитит сигнал при изменении."""
+        n = max(1, len(self._slice_bounds) - 1) if self._slice_bounds else 0
+        if n != getattr(self, "_slice_count", n):
+            self._slice_count = n
+            try:
+                self.sliceCountChanged.emit(n)
+            except Exception:
+                pass
+
+    def _store_slice_state(self, path: Optional[str]):
+        """Снимок состояния нарезки для указанного пути (обычно текущего)."""
+        if not path:
+            return
+        st = {
+            "enabled": bool(getattr(self, "_slice_enabled", False)),
+            "by": str(getattr(self, "_slice_by", "count")),
+            "count": int(getattr(self, "_slice_count", 2)),
+            "height_px": int(getattr(self, "_slice_height_px", 2000)),
+            "bounds": list(getattr(self, "_slice_bounds", []) or []),
+        }
+        self._slice_state[path] = st
+
+    def _restore_slice_state(self, path: Optional[str]):
+        """Применить сохранённое состояние для пути (если есть). Безопасно к отсутствию."""
+        if not path:
+            return
+        st = self._slice_state.get(path)
+        img = self._images.get(path)
+        if st is None or img is None:
+            # по умолчанию — нарезка выключена
+            self._slice_enabled = False
+            self._slice_bounds = []
+            self._sync_slice_count_and_emit()
+            self._update_preview_pixmap()
+            return
+
+        # применяем режим/параметры
+        self._slice_enabled = bool(st.get("enabled", False))
+        self._slice_by = "height" if st.get("by") == "height" else "count"
+        self._slice_count = max(2, int(st.get("count", 2)))
+        self._slice_height_px = max(1, int(st.get("height_px", 2000)))
+
+        bounds = list(st.get("bounds") or [])
+        # подстраховка: корректируем под текущую высоту изображения
+        H = int(img.height())
+        bounds = sorted(set(max(0, min(H, int(y))) for y in bounds))
+        if not bounds or bounds[0] != 0:
+            bounds = [0] + bounds
+        if bounds[-1] != H:
+            bounds.append(H)
+        # Если границы есть — используем их; иначе пересобираем по режиму
+        if len(bounds) >= 3 and any(bounds[i + 1] > bounds[i] for i in range(len(bounds) - 1)):
+            self._slice_bounds = bounds
+            # Синхронизируем self._slice_count и, если есть, уведомим UI
+            self._slice_count = max(2, len(self._slice_bounds) - 1)
+            try:
+                if hasattr(self, "sliceCountChanged"):
+                    self.sliceCountChanged.emit(int(self._slice_count))
+            except Exception:
+                pass
+        else:
+            # как и раньше — пересобираем по активному режиму
+            if self._slice_by == "height":
+                try:
+                    self._init_slice_bounds()
+                except Exception:
+                    self._slice_bounds = [0, H]
+            else:
+                self._rebuild_slice_bounds()
+
+        self._update_preview_pixmap()
+
+    def get_slice_state(self, path: Optional[str] = None) -> dict:
+        """Вернуть слепок текущего состояния (для отладки/логов)."""
+        p = path or self._current_path
+        if not p:
+            return {}
+        cur = {
+            "enabled": bool(getattr(self, "_slice_enabled", False)),
+            "by": str(getattr(self, "_slice_by", "count")),
+            "count": int(getattr(self, "_slice_count", 2)),
+            "height_px": int(getattr(self, "_slice_height_px", 2000)),
+            "bounds": list(getattr(self, "_slice_bounds", []) or []),
+        }
+        # если есть сохранённая версия — вернём её (реальное пер-файловое состояние)
+        return self._slice_state.get(p, cur)
 
     def _remember_scroll(self, path: str | None):
         if not path:
@@ -495,11 +619,10 @@ class PreviewPanel(SliceModeMixin, QWidget):
         """Полностью убрать пути из внутренних кэшей превью."""
         if not paths:
             return
-        # Если удаляем текущий — сбросить предпросмотр
         if getattr(self, "_current_path", None) in paths:
             self._current_path = None
             try:
-                self.label.setText("Предпросмотр")
+                self.label.setText("Нет изображения")
             except Exception:
                 pass
 
@@ -693,6 +816,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
             ys2.append(min(y, H))
         ys2[-1] = H
         self._slice_bounds = ys2
+        self._sync_slice_count_and_emit()
 
     def _slice_bounds_on_label(self) -> List[int]:
         """Пересчёт границ из координат изображения в координаты pixmap/label."""
@@ -728,16 +852,58 @@ class PreviewPanel(SliceModeMixin, QWidget):
         pm = self.label.pixmap()
         if not pm or not (self._current_path and self._current_path in self._images):
             return
-        img = self._images[self._current_path]
-        # в image-координаты
+
+        # Координата в пикселях исходного изображения
         y_img = self._label_to_image_y(pos_label.y())
-        # нельзя пересекать соседей
+
         i = self._drag_boundary_index
-        lo = self._slice_bounds[i - 1] + 1
-        hi = self._slice_bounds[i + 1] - 1
-        y_img = max(lo, min(hi, y_img))
-        self._slice_bounds[i] = y_img
-        self.label.update()
+        prev_y = self._slice_bounds[i - 1]
+        next_y = self._slice_bounds[i + 1]
+
+        # Текущее число областей (фрагментов)
+        n_frag = max(1, len(self._slice_bounds) - 1)
+
+        # Кандидат на "схлопывание"?
+        too_small = (y_img - prev_y) < 1 or (next_y - y_img) < 1
+
+        if too_small:
+            # Удалять можно ТОЛЬКО если после удаления останется >= 2 областей
+            if n_frag > 2:
+                try:
+                    del self._slice_bounds[i]
+                except Exception:
+                    return
+
+                # Сбросим состояние драга/курсора
+                self._drag_boundary_index = None
+                try:
+                    self.label.setCursor(Qt.ArrowCursor)
+                except Exception:
+                    pass
+
+                # Синхронизируем внутренний счётчик и, если есть, эмитим сигнал
+                try:
+                    self._slice_count = max(2, len(self._slice_bounds) - 1)
+                    if hasattr(self, "sliceCountChanged"):
+                        self.sliceCountChanged.emit(int(self._slice_count))
+                except Exception:
+                    pass
+
+                # Сохраним пер-файловое состояние, перерисуем
+                self._store_slice_state(self._current_path)
+                self.label.update()
+                if hasattr(self, "_update_info_label"):
+                    self._update_info_label()
+                return
+            else:
+                # Нельзя схлопнуть дальше — оставляем минимум 1 px
+                y_img = max(prev_y + 1, min(next_y - 1, y_img))
+
+        # Обычное перемещение с ограничениями, чтобы не оставить нулевую высоту
+        y_img = max(prev_y + 1, min(next_y - 1, y_img))
+        if y_img != self._slice_bounds[i]:
+            self._slice_bounds[i] = y_img
+            self.label.update()
 
     def discard_changes(self, path: Optional[str] = None):
         """Вернуть картинку(и) к состоянию с диска без записи на диск."""
@@ -778,11 +944,12 @@ class PreviewPanel(SliceModeMixin, QWidget):
         if prev:
             self._remember_scroll(prev)
 
+        self._store_slice_state(prev)
         self._current_path = path
         self._clear_selection()
 
         if not path:
-            self.label.setText("Предпросмотр")
+            self.label.setText("Нет изображения")
             self._update_info_label()
             return
 
@@ -829,9 +996,12 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self._loaded_from_disk.setdefault(path, qimg.copy())
         self._dirty.setdefault(path, False)
 
+        self._restore_slice_state(path)
         self._update_preview_pixmap()
         self._restore_scroll(path)
         self._update_actions_enabled()
+        if path:
+            self.currentPathChanged.emit(path)
 
     def save_current_overwrite(self) -> bool:
         if self._is_memory_path(self._current_path):

@@ -91,9 +91,6 @@ def _collect_dom_urls(series_id: int, product_id: str | int, *,
 
     url = _viewer_url(int(series_id), str(product_id))
 
-    # Опционально используем уже созданный контекст (ctx) для ускорения.
-    url = _viewer_url(int(series_id), str(product_id))
-
     if ctx is not None:
         _collect_dom_urls_in_ctx(ctx, url, urls_json_path, log=log, stop_flag=stop_flag, pre_action=callable(pre_action) and pre_action, scroll_ms=scroll_ms)
         return urls_json_path

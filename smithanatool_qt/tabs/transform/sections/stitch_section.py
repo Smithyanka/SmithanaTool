@@ -4,7 +4,7 @@ import os, sys, subprocess
 from typing import List
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox, QCheckBox,
-    QPushButton, QGroupBox, QFileDialog, QMessageBox, QProgressDialog, QApplication
+    QPushButton, QGroupBox, QFileDialog, QMessageBox, QProgressDialog, QApplication, QLineEdit
 )
 from PySide6.QtCore import Qt, QTimer
 from ..stitcher import load_images, merge_vertical, merge_horizontal, save_png
@@ -15,6 +15,10 @@ from smithanatool_qt.settings_bind import (
 )
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from smithanatool_qt.tabs.common.bind import apply_bindings
+from smithanatool_qt.tabs.common.defaults import DEFAULTS
+
 
 def _open_in_explorer(path: str):
     try:
@@ -37,6 +41,15 @@ class StitchSection(QWidget):
         )
 
         v = QVBoxLayout(self); v.setAlignment(Qt.AlignTop)
+
+        self._save_dir_le = QLineEdit(self);
+        self._save_dir_le.setVisible(False)  # stitch_out_dir
+        self._save_file_dir_le = QLineEdit(self);
+        self._save_file_dir_le.setVisible(False)  # stitch_save_dir
+        self._pick_dir_le = QLineEdit(self);
+        self._pick_dir_le.setVisible(False)  # stitch_pick_dir
+        self._auto_pick_dir_le = QLineEdit(self);
+        self._auto_pick_dir_le.setVisible(False)  # stitch_auto_pick_dir
 
         # Направление
         row_dir = QHBoxLayout()
@@ -118,21 +131,20 @@ class StitchSection(QWidget):
         # Метка и состояние
         row_a_threads.addWidget(self.chk_auto_threads)
         row_a_threads.addSpacing(12)
-        row_a_threads.addWidget(QLabel("Потоки:"))
+        self.lbl_threads = QLabel("Потоки:")
+        row_a_threads.addWidget(self.lbl_threads)
         row_a_threads.addWidget(self.spin_threads)
         row_a_threads.addStretch(1)
 
-        # управление доступностью поля "Потоки" от чекбокса "Авто потоки"
-        def _apply_threads_state(checked: bool):
-            self.spin_threads.setEnabled(not checked)
-
-        _apply_threads_state(self.chk_auto_threads.isChecked())
-        self.chk_auto_threads.toggled.connect(_apply_threads_state)
+        self._apply_threads_state(self.chk_auto_threads.isChecked())
+        self.chk_auto_threads.toggled.connect(self._apply_threads_state)
 
         av.addLayout(row_a_threads)
         # ----- /Потоки
 
-        row_a2 = QHBoxLayout(); row_a2.addStretch(1)
+        row_a2 = QHBoxLayout()
+        row_a2.setContentsMargins(0, 8, 0, 0)
+        row_a2.addStretch(1)
         self.btn_auto = QPushButton("Склеить выбранные")
         self.btn_auto_pick = QPushButton("Выбрать файлы…")
         row_a2.addWidget(self.btn_auto); row_a2.addWidget(self.btn_auto_pick)
@@ -151,8 +163,6 @@ class StitchSection(QWidget):
         self._apply_dim_state()
         QTimer.singleShot(0, self._apply_settings_from_ini)
 
-        self.cmb_dir.currentIndexChanged.connect(lambda v: self._save_int_ini("mode", v))
-        self.chk_no_resize.toggled.connect(lambda v: self._save_bool_ini("no_resize", v))
         self.spin_dim.valueChanged.connect(lambda v: self._save_int_ini("dim", v))
         self.chk_opt.toggled.connect(lambda v: self._save_bool_ini("optimize_png", v))
         self.chk_opt.toggled.connect(self._apply_compress_state)
@@ -160,9 +170,26 @@ class StitchSection(QWidget):
         self.chk_strip.toggled.connect(lambda v: self._save_bool_ini("strip_metadata", v))
         self.spin_group.valueChanged.connect(lambda v: self._save_int_ini("per", v))
         self.spin_zeros.valueChanged.connect(lambda v: self._save_int_ini("zeros", v))
-        self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini("auto_threads", v))
-        self.spin_threads.valueChanged.connect(lambda v: self._save_int_ini("threads", v))
 
+        # управление доступностью поля "Потоки" от чекбокса "Авто потоки"
+
+    def _apply_threads_state(self, checked: bool | None = None):
+        if checked is None:
+            checked = self.chk_auto_threads.isChecked()
+        on = not checked
+        self.spin_threads.setEnabled(on)
+        if hasattr(self, "lbl_threads"):
+            self.lbl_threads.setEnabled(on)
+
+    def _ini_load_str(self, key: str, default: str = "") -> str:
+        try:
+            shadow_attr = f"__{key}__shadow"
+            setattr(self, shadow_attr, default)
+            with group("StitchSection"):
+                bind_attr_string(self, shadow_attr, key, default)
+            return getattr(self, shadow_attr, default)
+        except Exception:
+            return default
     def _apply_compress_state(self, optimize_on: bool):
         """Вариант А: затемнить = отключить контрол уровня при включённой оптимизации."""
         # выключаем/включаем спин и его метку
@@ -230,10 +257,21 @@ class StitchSection(QWidget):
             self.spin_group.setValue(defaults["per"])
         if hasattr(self, "spin_zeros"):
             self.spin_zeros.setValue(defaults["zeros"])
+        if hasattr(self, "chk_auto_threads"):
+            self.chk_auto_threads.setChecked(defaults["auto_threads"])
+        if hasattr(self, "spin_threads"):
+            self.spin_threads.setValue(min(32, defaults["threads"]))
 
+        # применить доступность "Потоки"
+        on = not self.chk_auto_threads.isChecked()
+        self.spin_threads.setEnabled(on)
+        if hasattr(self, "lbl_threads"):
+            self.lbl_threads.setEnabled(on)
         # применить внутренние завязки UI
         if hasattr(self, "_apply_dim_state"):
             self._apply_dim_state()
+
+
 
         # сохранить в INI
         self._save_int_ini("mode", defaults["mode"])
@@ -247,25 +285,31 @@ class StitchSection(QWidget):
         self._save_bool_ini("auto_threads", defaults["auto_threads"])
         self._save_int_ini("threads", min(32, defaults["threads"]))
 
+        self._apply_threads_state()
+
     def _apply_settings_from_ini(self):
-        with group("StitchSection"):
-            bind_spinbox(self.spin_dim, "dim", 800)
-            bind_checkbox(self.chk_no_resize, "no_resize", True)
-            bind_checkbox(self.chk_opt, "optimize_png", True)
-            bind_spinbox(self.spin_compress, "compress_level", 6)
-            self._apply_compress_state(self.chk_opt.isChecked())
-            bind_checkbox(self.chk_strip, "strip_metadata", True)
-            bind_spinbox(self.spin_group, "per", 12)
-            bind_spinbox(self.spin_zeros, "zeros", 2)
-            bind_checkbox(self.chk_auto_threads, "auto_threads", True)
-            bind_spinbox(self.spin_threads, "threads", max(2, (os.cpu_count() or 4) // 2))
-            # Направление: 0 = вертикаль, 1 = горизонталь
-            self.cmb_dir.setCurrentIndex(0)
-            try:
-                self.cmb_dir.setCurrentIndex(int(getattr(self, "__mode_shadow", "0")))
-            except Exception:
-                pass
+        apply_bindings(self, "StitchSection", [
+            (self.cmb_dir, "mode", 0),  # индекс: 0=вертикаль
+            (self.chk_no_resize, "no_resize", True),
+            (self.spin_dim, "dim", 800),
+            (self.chk_opt, "optimize_png", True),
+            (self.spin_compress, "compress_level", 6),
+            (self.chk_strip, "strip_metadata", True),
+            (self.spin_group, "per", 12),
+            (self.spin_zeros, "zeros", 2),
+
+            # потоки — единые дефолты
+            (self.chk_auto_threads, "auto_threads", DEFAULTS["auto_threads"]),
+            (self.spin_threads, "threads", DEFAULTS["threads"]),
+
+            # директории
+            (self._save_dir_le, "stitch_out_dir", DEFAULTS["stitch_out_dir"]),
+            (self._save_file_dir_le, "stitch_save_dir", DEFAULTS["stitch_save_dir"]),
+            (self._pick_dir_le, "stitch_pick_dir", DEFAULTS["stitch_pick_dir"]),
+            (self._auto_pick_dir_le, "stitch_auto_pick_dir", DEFAULTS["stitch_auto_pick_dir"]),
+        ])
         self._apply_compress_state(self.chk_opt.isChecked())
+        self._apply_dim_state()
 
     def _save_str_ini(self, key: str, value: str):
         try:
@@ -291,7 +335,10 @@ class StitchSection(QWidget):
             self.chk_no_resize.setText("Не изменять высоту")
 
     def _apply_dim_state(self):
-        self.spin_dim.setEnabled(not self.chk_no_resize.isChecked())
+        on = not self.chk_no_resize.isChecked()
+        self.spin_dim.setEnabled(on)
+        if hasattr(self, "lbl_dim"):
+            self.lbl_dim.setEnabled(on)
 
     def _ask_selected_paths(self) -> List[str]:
         if self._gallery and hasattr(self._gallery, 'selected_files'):
@@ -321,11 +368,28 @@ class StitchSection(QWidget):
             self._show_done_box(out_dir, f"Сохранено: {os.path.basename(out_path)}")
 
     def _do_stitch_one_pick(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Выберите изображения", "", "Изображения (*.png *.jpg *.jpeg *.bmp *.webp)")
-        if len(files) < 2: return
-        out_path, _ = QFileDialog.getSaveFileName(self, "Сохранить как", "result.png", "PNG (*.png)")
-        if not out_path: return
-        if not out_path.lower().endswith(".png"): out_path += ".png"
+        start_pick = self._ini_load_str("stitch_pick_dir", os.path.expanduser("~"))
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Выберите изображения", start_pick,
+            "Изображения (*.png *.jpg *.jpeg *.bmp *.webp)"
+        )
+        if len(files) < 2:
+            return
+        # сохранить папку выбора
+        self._save_str_ini("stitch_pick_dir", os.path.dirname(files[0]))
+
+        start_save = self._ini_load_str("stitch_save_dir", os.path.dirname(files[0]))
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить как", os.path.join(start_save, "result.png"),
+            "PNG (*.png)"
+        )
+        if not out_path:
+            return
+        if not out_path.lower().endswith(".png"):
+            out_path += ".png"
+        # сохранить папку сохранения
+        self._save_str_ini("stitch_save_dir", os.path.dirname(out_path))
+
         out_path2, out_dir2 = self._stitch_and_save_single(files, out_path)
         if out_path2:
             self._show_done_box(out_dir2, f"Сохранено: {os.path.basename(out_path2)}")
@@ -346,12 +410,17 @@ class StitchSection(QWidget):
         if direct_out_path:
             out_path = direct_out_path
         else:
-            out_path, _ = QFileDialog.getSaveFileName(self, "Сохранить как", "result.png", "PNG (*.png)")
+            start_save = self._ini_load_str("stitch_save_dir", os.path.expanduser("~"))
+            out_path, _ = QFileDialog.getSaveFileName(
+                self, "Сохранить как", os.path.join(start_save, "result.png"),
+                "PNG (*.png)"
+            )
             if not out_path:
                 dlg.close();
                 return None, None
             if not out_path.lower().endswith(".png"):
                 out_path += ".png"
+            self._save_str_ini("stitch_save_dir", os.path.dirname(out_path))
 
         # Вынесем тяжёлую часть в отдельный поток (1 воркер тут достаточно)
         def _job():
@@ -394,20 +463,38 @@ class StitchSection(QWidget):
     def _do_stitch_auto(self):
         paths = self._ask_selected_paths()
         if len(paths) < 2:
-            QMessageBox.warning(self, "Автосклейка", "Выберите минимум два изображения или используйте «Выбрать файлы…».")
+            QMessageBox.warning(self, "Автосклейка",
+                                "Выберите минимум два изображения или используйте «Выбрать файлы…».")
             return
-        out_dir = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения")
-        if not out_dir: return
+        start_out = self._ini_load_str("stitch_out_dir", os.path.expanduser("~"))
+        out_dir = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения", start_out)
+        if not out_dir:
+            return
+        self._save_str_ini("stitch_out_dir", out_dir)
+
         count = self._stitch_and_save_groups(paths, out_dir)
-        if count > 0: self._show_done_box(out_dir, f"Файлов сохранено: {count}")
+        if count > 0:
+            self._show_done_box(out_dir, f"Файлов сохранено: {count}")
 
     def _do_stitch_auto_pick(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Выберите изображения", "", "Изображения (*.png *.jpg *.jpeg *.bmp *.webp)")
-        if len(files) < 2: return
-        out_dir = QFileDialog.getExistingDirectory(self, "Папка для сохранения PNG")
-        if not out_dir: return
+        start_pick = self._ini_load_str("stitch_auto_pick_dir", os.path.expanduser("~"))
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Выберите изображения", start_pick,
+            "Изображения (*.png *.jpg *.jpeg *.bmp *.webp)"
+        )
+        if len(files) < 2:
+            return
+        self._save_str_ini("stitch_auto_pick_dir", os.path.dirname(files[0]))
+
+        start_out = self._ini_load_str("stitch_out_dir", os.path.dirname(files[0]))
+        out_dir = QFileDialog.getExistingDirectory(self, "Папка для сохранения PNG", start_out)
+        if not out_dir:
+            return
+        self._save_str_ini("stitch_out_dir", out_dir)
+
         count = self._stitch_and_save_groups(files, out_dir)
-        if count > 0: self._show_done_box(out_dir, f"Файлов сохранено: {count}")
+        if count > 0:
+            self._show_done_box(out_dir, f"Файлов сохранено: {count}")
 
     def _stitch_and_save_groups(self, paths: List[str], out_dir: str) -> int:
         group = int(self.spin_group.value())

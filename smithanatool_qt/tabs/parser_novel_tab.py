@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QScrollArea, QFrame
 )
 
-from PySide6.QtCore import Qt, Slot, QTimer, QStandardPaths, QRegularExpression
+from PySide6.QtCore import Qt, Slot, QTimer, QStandardPaths, QRegularExpression, QSignalBlocker
 from PySide6.QtGui import QIntValidator, QRegularExpressionValidator, QValidator
 
 # === INI биндинги ===
@@ -18,7 +18,6 @@ from smithanatool_qt.settings_bind import (
     bind_attr_string, save_attr_string
 )
 
-from .novel_worker import NovelParserWorker, NovelParserConfig
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel
 
@@ -44,6 +43,8 @@ class ElidedLabel(QLabel):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        if hasattr(self, "_left_scroll"):
+            self._left_content.setMinimumWidth(self._left_scroll.viewport().width())
         self._apply_elide()
 
     def _apply_elide(self):
@@ -73,14 +74,14 @@ class ParserNovelTab(QWidget):
         self._worker: NovelParserWorker | None = None
         self._out_dir: str = ""
 
-        layout = QHBoxLayout(self); layout.setContentsMargins(8,8,8,8); layout.setSpacing(6)
+        layout = QHBoxLayout(self); layout.setContentsMargins(0,0,0,10); layout.setSpacing(6)
         splitter = QSplitter(Qt.Horizontal, self); layout.addWidget(splitter)
 
         # LEFT: controls
         left = QWidget(); gl = QGridLayout(left)
         gl.setHorizontalSpacing(4)
         gl.setVerticalSpacing(9)
-        gl.setContentsMargins(8, 8, 8, 20)
+        gl.setContentsMargins(15, 0, 4, 20)
         gl.setColumnStretch(0, 0)
         gl.setColumnStretch(1, 1)
         gl.setColumnStretch(2, 0)
@@ -118,12 +119,9 @@ class ParserNovelTab(QWidget):
         self._val_csv_ints = QRegularExpressionValidator(self._rx_csv_ints, self)
         self._val_ranges = QRegularExpressionValidator(self._rx_ranges, self)
 
-        # ID тайтла — только целое
         self.ed_title.setValidator(self._val_int)
-        # Том(а) — целые и диапазоны
         self.ed_vol.setValidator(self._val_ranges)
 
-        # хелпер для проверки валидности (используем в _refresh_run_enabled)
         def _is_valid(le: QLineEdit) -> bool:
             v = le.validator()
             if not v:
@@ -148,15 +146,13 @@ class ParserNovelTab(QWidget):
         # RIGHT: log
         right = QWidget();
         vr = QVBoxLayout(right);
-        vr.setContentsMargins(8, 8, 8, 8);
-        vr.setSpacing(8)
+        vr.setContentsMargins(0, 15, 15, 0);
+        vr.setSpacing(11)
         vr.addWidget(QLabel("Лог:"))
         self.txt_log = QTextEdit();
         self.txt_log.setReadOnly(True)
         vr.addWidget(self.txt_log, 1)
 
-        # --- НОВОЕ: подсказка о сессии как в манхве
-        # --- НОВОЕ: две кнопки справа
         self.btn_clear = QPushButton("Очистить лог")
         self.btn_delete_session = QPushButton("Удалить сессию")
 
@@ -167,13 +163,13 @@ class ParserNovelTab(QWidget):
         self.lbl_session_hint.setWordWrap(True)
         self.lbl_session_hint.setTextFormat(Qt.PlainText)
         self.lbl_session_hint.setStyleSheet("color:#a9a9a9; font-size:11px;")
-        self.lbl_session_hint.setMinimumWidth(200)
+        self.lbl_session_hint.setMinimumWidth(400)
         self.lbl_session_hint.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         al = QHBoxLayout()
         al.setContentsMargins(0, 0, 0, 0)
         al.setSpacing(6)
-        al.addWidget(self.lbl_session_hint, 1)  # лейбл слева, занимает всё доступное
+        al.addWidget(self.lbl_session_hint, 1)
         al.addStretch(1)
         al.addWidget(self.btn_delete_session)
         al.addWidget(self.btn_clear)
@@ -184,21 +180,30 @@ class ParserNovelTab(QWidget):
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        self._left_scroll = left_scroll
+        self._left_content = left
+
+        self._left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self._left_scroll.setViewportMargins(0, 0, 0, 0)
+        self._left_content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._left_content.setMinimumWidth(self._left_scroll.viewport().width())
+
+
         left_scroll.setWidget(left)
 
         # Контейнер слева: скролл + нижний футер
         left_container = QWidget(self)
         left_outer = QVBoxLayout(left_container)
-        left_outer.setContentsMargins(0, 0, 0, 0)
+        left_outer.setContentsMargins(0, 15, 0, 0)
         left_outer.setSpacing(0)
         left_outer.addWidget(left_scroll, 1)
 
         # Футер с кнопкой "Сброс настроек" (фиксированная область снизу)
         left_footer = QHBoxLayout()
-        left_footer.setContentsMargins(8, 6, 8, 8)
+        left_footer.setContentsMargins(8, 11, 8, 0)
         left_footer.setSpacing(0)
         self.btn_reset = QPushButton("Сброс настроек")
-        self.btn_reset.setFixedHeight(28)
         self.btn_reset.setFixedWidth(100)
         left_footer.addStretch(1)
         left_footer.addWidget(self.btn_reset)
@@ -216,7 +221,7 @@ class ParserNovelTab(QWidget):
         self.btn_stop = QPushButton("Остановить")
         self.btn_continue = QPushButton("Продолжить после входа"); self.btn_continue.setEnabled(False)
         self.btn_open_dir = QPushButton("Открыть папку"); self.btn_open_dir.setEnabled(False)
-        rl = QHBoxLayout(); rl.setContentsMargins(0,0,0,0); rl.setSpacing(6)
+        rl = QHBoxLayout(); rl.setContentsMargins(0,8,0,0); rl.setSpacing(6)
         rl.addStretch(1)
         rl.addWidget(self.btn_open_dir)
         rl.addWidget(self.btn_continue)
@@ -236,7 +241,7 @@ class ParserNovelTab(QWidget):
         self.chk_auto_buy.setChecked(False)
         vb_buy.addWidget(self.chk_auto_buy)
 
-        self.chk_auto_use_ticket = QCheckBox("Автоматически использовать 대여권 (аренду)")
+        self.chk_auto_use_ticket = QCheckBox("Автоматически использовать тикет аренды")
         self.chk_auto_use_ticket.setToolTip(
             "Если включено, использование доступных тикетов подтверждается автоматически.")
         self.chk_auto_use_ticket.setChecked(False)
@@ -260,7 +265,7 @@ class ParserNovelTab(QWidget):
         self._ids_save_timer.timeout.connect(self._refresh_ids_from_table_and_save)
 
         self.btn_toggle_ids = QPushButton("Показать сохранённые ID")
-        self.btn_toggle_ids.setFixedHeight(24)
+        self.btn_toggle_ids.setFixedHeight(35)
         gl.addWidget(self.btn_toggle_ids, row, 0, 1, 3);
         row += 1
 
@@ -284,7 +289,7 @@ class ParserNovelTab(QWidget):
         self.btn_continue.clicked.connect(self._continue)
         self.rb_number.toggled.connect(self._on_mode_toggled)
         self.rb_id.toggled.connect(self._on_mode_toggled)
-        self.btn_reset.clicked.connect(self.reset_to_defaults)
+        self.btn_reset.clicked.connect(self._confirm_and_reset)
         self.btn_delete_session.clicked.connect(self._delete_session)
 
         # --- persist line edits to INI on change ---
@@ -302,8 +307,6 @@ class ParserNovelTab(QWidget):
         self.ed_spec.textChanged.connect(lambda *_: self._refresh_run_enabled())
         self.ed_vol.textChanged.connect(lambda *_: self._refresh_run_enabled())
 
-        # Применяем настройки после инициализации UI
-        QTimer.singleShot(0, self._apply_settings_from_ini)
 
     @Slot()
     def _delete_session(self):
@@ -330,32 +333,25 @@ class ParserNovelTab(QWidget):
                 self._append_log(f"[WARN] Не удалось удалить сессию: {p}")
                 QMessageBox.warning(self, "Удалить сессию", "Не удалось удалить файл сессии.")
     # ---------- UI state ----------
-    def reset_to_defaults(self):
-        default_mode_idx = 0  # 0=number, 1=id
-        defaults = dict(
-            title="",
-            spec="",
-            volumes="",
-            # out_dir не трогаем
+    def _confirm_and_reset(self):
+        btn = QMessageBox.warning(
+            self,
+            "Сброс настроек",
+            "Сбросить настройки?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
         )
+        if btn == QMessageBox.Yes:
+            self.reset_to_defaults()
 
-        # режим
-        self.rb_number.setChecked(default_mode_idx == 0)
-        self.rb_id.setChecked(default_mode_idx == 1)
+    def reset_to_defaults(self):
+        keep_mode_idx = 1 if self.rb_id.isChecked() else 0
+
+        self.rb_number.setChecked(keep_mode_idx == 0)
+        self.rb_id.setChecked(keep_mode_idx == 1)
         self._update_mode()
 
-        # поля
-        self.ed_title.setText(defaults["title"])
-        self.ed_spec.setText(defaults["spec"])
-        self.ed_vol.setText(defaults["volumes"])
-
-        # сохранить в INI
-        self._save_int_ini("mode", default_mode_idx)
-        self._save_str_ini("title", defaults["title"])
-        self._save_str_ini("spec", defaults["spec"])
-        self._save_str_ini("volumes", defaults["volumes"])
-
-        # пути/кнопки
+        self._save_int_ini("mode", keep_mode_idx)
         self.btn_run.setEnabled(bool(self._out_dir))
         self.btn_open_dir.setEnabled(bool(self._out_dir))
 
@@ -446,7 +442,7 @@ class ParserNovelTab(QWidget):
 
         self.ids_table = QTableWidget(0, 2)
         self.ids_table.setHorizontalHeaderLabels(["Название", "ID"])
-        self.ids_table.setFixedHeight(120)
+        self.ids_table.setFixedHeight(200)
         self.ids_table.horizontalHeader().setStretchLastSection(True)
         self.ids_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.ids_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -671,6 +667,7 @@ class ParserNovelTab(QWidget):
         if not self._out_dir:
             QMessageBox.warning(self, "Парсер", "Сначала выберите папку сохранения.")
             return
+        from .novel_worker import NovelParserWorker, NovelParserConfig
         cfg = self._collect_cfg()
         self._append_log("[DEBUG] Запуск парсера новелл Kakao.")
 
@@ -702,11 +699,6 @@ class ParserNovelTab(QWidget):
         self._append_log("[DONE] Готово.")
         self._set_running(False)
         QTimer.singleShot(0, lambda: setattr(self, "_worker", None))
-
-    def _set_running(self, running: bool):
-        self.btn_run.setEnabled(not running and bool(self._out_dir))
-        self.btn_stop.setEnabled(running)
-        self.btn_continue.setEnabled(running)
 
     def _set_running(self, running: bool):
         # Запоминаем состояние и пересчитываем доступность кнопок
@@ -771,15 +763,6 @@ class ParserNovelTab(QWidget):
 
     @Slot(bool)
     def _on_mode_toggled(self, _checked: bool):
-        """Сразу досохраняем выбранный режим в INI и обновляем UI."""
-        # 0 — по номеру, 1 — по ID
-        mode_index = 1 if self.rb_id.isChecked() else 0
-        try:
-            setattr(self, "__mode_shadow", str(mode_index))
-            with group("ParserNovel"):
-                save_attr_string(self, "__mode_shadow", "mode")
-        except Exception:
-            pass
         self._update_mode()
         self._refresh_run_enabled()
 
@@ -833,4 +816,28 @@ class ParserNovelTab(QWidget):
             )
         if self._worker:
             self._worker.provide_use_rental_answer(bool(ans))
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if getattr(self, "_ini_applied", False):
+            return
+        self._ini_applied = True
+
+        self.setUpdatesEnabled(False)
+        blockers = [
+            QSignalBlocker(self.ed_title),
+            QSignalBlocker(self.ed_spec),
+            QSignalBlocker(self.ed_vol),
+            QSignalBlocker(self.rb_number),
+            QSignalBlocker(self.rb_id),
+            QSignalBlocker(self.chk_auto_buy),
+            QSignalBlocker(self.chk_auto_use_ticket),
+        ]
+        try:
+            self._apply_settings_from_ini()
+            self._update_mode()
+            self._refresh_run_enabled()
+        finally:
+            del blockers
+            self.setUpdatesEnabled(True)
 

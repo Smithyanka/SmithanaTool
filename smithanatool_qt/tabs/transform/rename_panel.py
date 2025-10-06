@@ -41,8 +41,8 @@ class RenamePanel(QWidget):
     def __init__(self, gallery=None, parent=None):
         super().__init__(parent)
         self._gallery = gallery
-        self._undo_stack: List[Dict[str, str]] = []  # каждый элемент — отображение current_path -> previous_path
-        self._redo_stack: List[Dict[str, str]] = []  # каждый элемент — отображение previous_path -> current_path
+        self._undo_stack: List[Dict[str, str]] = []
+        self._redo_stack: List[Dict[str, str]] = []
 
 
         v = QVBoxLayout(self)
@@ -60,7 +60,11 @@ class RenamePanel(QWidget):
         # Старт №, Нули
         row_nums = QHBoxLayout()
         row_nums.addWidget(QLabel("Старт №:"))
-        self.spin_start = QSpinBox(); self.spin_start.setRange(0, 999999); self.spin_start.setValue(1)
+        self.spin_start = QSpinBox()
+        self.spin_start.setRange(0, 99999)
+
+        self.spin_start.setFixedWidth(50)
+        self.spin_start.setValue(1)
         row_nums.addWidget(self.spin_start)
         row_nums.addSpacing(12)
         row_nums.addWidget(QLabel("Нули:"))
@@ -81,6 +85,7 @@ class RenamePanel(QWidget):
 
         # Кнопки
         row_btns = QHBoxLayout()
+        row_btns.setContentsMargins(0, 8, 0, 0)
         row_btns.addStretch(1)
         self.btn_rename_selected = QPushButton("Переименовать")
         self.btn_pick_files = QPushButton("Выбрать файлы...")
@@ -99,7 +104,7 @@ class RenamePanel(QWidget):
             "<code>{n}</code> — нумерация с учётом нулей."
         )
         lbl = QLabel(help_text); lbl.setWordWrap(True)
-        lbl.setStyleSheet("font-size: 12px; color: #666;")
+        lbl.setStyleSheet("font-size: 12px; color: #454545;")
         v.addWidget(lbl)
 
         # Сигналы

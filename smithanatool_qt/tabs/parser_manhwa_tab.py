@@ -30,6 +30,8 @@ from smithanatool_qt.parsers.auth_session import (
     get_session_path, delete_session,
 )
 
+from smithanatool_qt.tabs.common.defaults import DEFAULTS
+
 # === Local split modules ===
 from smithanatool_qt.tabs.manhwa.manhwa_tab_elided_label import ElidedLabel
 from smithanatool_qt.tabs.manhwa.manhwa_tab_utils import open_in_explorer, choose_start_dir
@@ -50,6 +52,7 @@ class ParserManhwaTab(QWidget):
         self._ids_save_timer.setInterval(200)
 
         layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 10)
         splitter = QSplitter(Qt.Horizontal, self)
         layout.addWidget(splitter)
 
@@ -58,7 +61,7 @@ class ParserManhwaTab(QWidget):
         gl = QGridLayout(left)
         gl.setHorizontalSpacing(4)
         gl.setVerticalSpacing(9)
-        gl.setContentsMargins(8, 8, 8, 20)
+        gl.setContentsMargins(15, 0, 4, 20)
         gl.setColumnStretch(0, 0)
         gl.setColumnStretch(1, 1)
         gl.setColumnStretch(2, 0)
@@ -124,29 +127,40 @@ class ParserManhwaTab(QWidget):
         # Min width
         gl.addWidget(QLabel("Мин. ширина (px):"), row, 0)
         self.spin_minw = QSpinBox(); self.spin_minw.setRange(0, 5000); self.spin_minw.setValue(720)
-        gl.addWidget(self.spin_minw, row, 1); row += 1
+        gl.addWidget(self.spin_minw, row, 1, 1, 2)  ; row += 1
 
         # Threads
-        thr = QHBoxLayout(); thr.setContentsMargins(0, 0, 0, 0); thr.setSpacing(6)
-        self.chk_auto_threads = QCheckBox("Авто потоки"); self.chk_auto_threads.setChecked(True)
-        self.spin_threads = QSpinBox(); self.spin_threads.setRange(1, 32)
+        thr = QHBoxLayout();
+        thr.setContentsMargins(0, 0, 0, 0);
+        thr.setSpacing(6)
+
+        self.chk_auto_threads = QCheckBox("Авто потоки");
+        self.chk_auto_threads.setChecked(True)
+        self.spin_threads = QSpinBox();
+        self.spin_threads.setRange(1, 32)
         _default_thr = max(2, (os.cpu_count() or 4) // 2)
         self.spin_threads.setValue(min(32, _default_thr))
+
         thr.addWidget(self.chk_auto_threads)
         thr.addSpacing(8)
-        thr.addWidget(QLabel("Потоки:"))
+
+        self.lbl_threads = QLabel("Потоки:")
+
+        thr.addWidget(self.lbl_threads)
         thr.addWidget(self.spin_threads)
         thr.addStretch(1)
-        gl.addLayout(thr, row, 0, 1, 3); row += 1
-        self.spin_threads.setEnabled(False)
-        self.chk_auto_threads.toggled.connect(lambda checked: self.spin_threads.setEnabled(not checked))
+        gl.addLayout(thr, row, 0, 1, 3);
+        row += 1
+
+        self.chk_auto_threads.toggled.connect(self._apply_threads_state)
+        self._apply_threads_state(self.chk_auto_threads.isChecked())
 
         # Run controls + Open folder
         self.btn_run = QPushButton("Запустить"); self.btn_run.setEnabled(False)
         self.btn_stop = QPushButton("Остановить")
         self.btn_continue = QPushButton("Продолжить после входа"); self.btn_continue.setEnabled(False)
         self.btn_open_dir = QPushButton("Открыть папку"); self.btn_open_dir.setEnabled(False)
-        rl = QHBoxLayout(); rl.setContentsMargins(0, 0, 0, 0); rl.setSpacing(6)
+        rl = QHBoxLayout(); rl.setContentsMargins(0, 8, 0, 0); rl.setSpacing(6)
         rl.addStretch(1)
         rl.addWidget(self.btn_open_dir)
         rl.addWidget(self.btn_continue)
@@ -158,21 +172,23 @@ class ParserManhwaTab(QWidget):
         grp_buy = QGroupBox("Покупки / тикеты")
         vb = QVBoxLayout(grp_buy)
         self.chk_auto_buy = QCheckBox("Автопокупка глав (без подтверждения)"); self.chk_auto_buy.setChecked(False)
-        self.chk_auto_use_ticket = QCheckBox("Автоматически использовать 대여권 (аренду)"); self.chk_auto_use_ticket.setChecked(False)
+        self.chk_auto_use_ticket = QCheckBox("Автоматически использовать тикет аренды"); self.chk_auto_use_ticket.setChecked(False)
         vb.addWidget(self.chk_auto_buy); vb.addWidget(self.chk_auto_use_ticket)
         gl.addWidget(grp_buy, row, 0, 1, 3); row += 1
 
         # === Автосклейка (секция) ===
         coll_auto = build_auto_stitch_section(self)
+        self._bind_section_expanded(coll_auto, "expanded_auto", default=False)
         gl.addWidget(coll_auto, row, 0, 1, 3); row += 1
 
         # === Доп. настройки ===
         coll_extra = build_extra_settings_section(self)
+        self._bind_section_expanded(coll_extra, "expanded_extra", default=False)
         gl.addWidget(coll_extra, row, 0, 1, 3); row += 1
 
         # --- Сохранённые ID (банк ID) ---
         self.btn_toggle_ids = QPushButton("Показать сохранённые ID")
-        self.btn_toggle_ids.setFixedHeight(24)
+        self.btn_toggle_ids.setFixedHeight(35)
         gl.addWidget(self.btn_toggle_ids, row, 0, 1, 3); row += 1
 
         # Container (slot) for IDs panel
@@ -196,11 +212,19 @@ class ParserManhwaTab(QWidget):
         left_scroll.setWidgetResizable(True)
         left_scroll.setFrameShape(QFrame.NoFrame)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        self._left_scroll = left_scroll
+        self._left_content = left
+        self._left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self._left_scroll.setViewportMargins(0, 0, 0, 0)
+        self._left_content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._left_content.setMinimumWidth(self._left_scroll.viewport().width())
+
         left_scroll.setWidget(left)
 
         left_container = QWidget(self)
         left_outer = QVBoxLayout(left_container)
-        left_outer.setContentsMargins(0, 0, 0, 0)
+        left_outer.setContentsMargins(0, 15, 0, 0)
         left_outer.setSpacing(0)
         left_outer.addWidget(left_scroll, 1)
 
@@ -228,7 +252,7 @@ class ParserManhwaTab(QWidget):
         self.rb_id.toggled.connect(self._persist_mode)
         self.rb_index.toggled.connect(self._persist_mode)
         self.rb_ui.toggled.connect(self._persist_mode)
-        self.btn_reset.clicked.connect(self.reset_to_defaults)
+        self.btn_reset.clicked.connect(self._confirm_and_reset)
         self.btn_del_sess.clicked.connect(self._delete_session_clicked)
         self.chk_opt.toggled.connect(self._update_png_controls)
 
@@ -241,12 +265,8 @@ class ParserManhwaTab(QWidget):
         self.rb_ui.toggled.connect(self._refresh_run_enabled)
 
         # Persist UI changes to INI
-        self.ed_title.editingFinished.connect(
-            lambda: self._save_str_ini("title", self.ed_title.text().strip())
-        )
-        self.ed_spec.editingFinished.connect(
-            lambda: self._save_str_ini("spec", self.ed_spec.text().strip())
-        )
+        self.ed_title.editingFinished.connect(lambda: self._save_str_ini("title", self.ed_title.text().strip()))
+        self.ed_spec.editingFinished.connect(lambda: self._save_str_ini("spec", self.ed_spec.text().strip()))
         self.spin_minw.valueChanged.connect(lambda v: self._save_int_ini("min_width", int(v)))
         self.spin_width.valueChanged.connect(lambda v: self._save_int_ini("target_width", int(v)))
         self.spin_comp.valueChanged.connect(lambda v: self._save_int_ini("compress_level", int(v)))
@@ -257,8 +277,9 @@ class ParserManhwaTab(QWidget):
         self.chk_delete.toggled.connect(lambda v: self._save_bool_ini("delete_sources", bool(v)))
         self.chk_opt.toggled.connect(lambda v: self._save_bool_ini("optimize_png", bool(v)))
         self.chk_strip.toggled.connect(lambda v: self._save_bool_ini("strip_metadata", bool(v)))
-        self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini("auto_threads", v))
+        self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini("auto_threads", bool(v)))
         self.spin_threads.valueChanged.connect(lambda v: self._save_int_ini("threads", int(v)))
+        self.spin_zeros.valueChanged.connect(lambda v: self._save_int_ini("zeros", int(v)))
 
         self._out_dir = ""
         self._stitch_dir = ""
@@ -272,6 +293,51 @@ class ParserManhwaTab(QWidget):
         app = QApplication.instance()
         if app:
             app.aboutToQuit.connect(self._abort_if_running)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if hasattr(self, "_left_scroll"):
+            self._left_content.setMinimumWidth(self._left_scroll.viewport().width())
+
+    def _bind_section_expanded(self, sec, key: str, default: bool = False):
+        shadow = f"__{key}__shadow"
+        setattr(self, shadow, "1" if default else "0")
+        from smithanatool_qt.settings_bind import group, \
+            bind_attr_string  # если уже импортировано сверху — не дублируйте
+        with group("ParserManhwa"):
+            bind_attr_string(self, shadow, key, "1" if default else "0")
+
+        val = str(getattr(self, shadow, "0")).lower() in ("1", "true", "yes", "on")
+
+        sec.toggle_button.blockSignals(True)
+        sec.toggle_button.setChecked(val)
+        sec.toggle_button.blockSignals(False)
+        try:
+            sec._set_content_visible(val, animate=False)
+            sec._update_header_icon(val)
+            sec.setProperty("expanded", val)
+        except Exception:
+            pass
+
+        sec.toggle_button.toggled.connect(lambda checked, k=key: self._save_bool_ini(k, checked))
+
+    def _confirm_and_reset(self):
+        btn = QMessageBox.warning(
+            self,
+            "Сброс настроек",
+            "Сбросить настройки?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if btn == QMessageBox.Yes:
+            self.reset_to_defaults()
+
+    def _apply_threads_state(self, checked: bool | None = None):
+        if checked is None:
+            checked = self.chk_auto_threads.isChecked()
+        on = not checked
+        self.spin_threads.setEnabled(on)
+        self.lbl_threads.setEnabled(on)
 
     def _refresh_run_enabled(self):
         running = self._worker is not None
@@ -330,6 +396,14 @@ class ParserManhwaTab(QWidget):
 
     # ===== Settings helpers =====
     def reset_to_defaults(self):
+        keep_title = self.ed_title.text().strip()
+        keep_spec = self.ed_spec.text().strip()
+        keep_mode_idx = (
+            0 if self.rb_number.isChecked()
+            else 1 if self.rb_id.isChecked()
+            else 2 if self.rb_index.isChecked()
+            else 3
+        )
         default_mode_idx = 0
         defaults = dict(
             title="",
@@ -348,13 +422,8 @@ class ParserManhwaTab(QWidget):
             threads=max(2, (os.cpu_count() or 4) // 2),
             delete_cache=True,
             scroll_ms=30000,
+            zeros=2,
         )
-        self.rb_number.setChecked(default_mode_idx == 0)
-        self.rb_id.setChecked(default_mode_idx == 1)
-        self.rb_index.setChecked(default_mode_idx == 2)
-        self._update_mode()
-        self.ed_title.setText(defaults["title"])
-        self.ed_spec.setText(defaults["spec"])
         self.spin_minw.setValue(defaults["min_width"])
         self.chk_auto.setChecked(defaults["auto_stitch"])
         self.chk_no_resize.setChecked(defaults["no_resize_width"])
@@ -369,11 +438,12 @@ class ParserManhwaTab(QWidget):
         self.spin_threads.setValue(min(32, defaults["threads"]))
         self.chk_delete_cache.setChecked(defaults["delete_cache"])
         self.spin_scroll_ms.setValue(int(defaults["scroll_ms"]))
+        self.spin_zeros.setValue(defaults["zeros"])
 
         # Save to INI
-        self._save_int_ini("mode", default_mode_idx)
-        self._save_str_ini("title", defaults["title"])
-        self._save_str_ini("spec", defaults["spec"])
+        self._save_int_ini("mode", keep_mode_idx)
+        self._save_str_ini("title", keep_title)
+        self._save_str_ini("spec", keep_spec)
         self._save_int_ini("min_width", defaults["min_width"])
         self._save_bool_ini("auto_stitch", defaults["auto_stitch"])
         self._save_bool_ini("no_resize_width", defaults["no_resize_width"])
@@ -388,6 +458,7 @@ class ParserManhwaTab(QWidget):
         self._save_int_ini("threads", min(32, defaults["threads"]))
         self._save_bool_ini("delete_cache", defaults["delete_cache"])
         self._save_int_ini("scroll_ms", defaults["scroll_ms"])
+        self._save_int_ini("zeros", defaults["zeros"])
 
     def _save_bool_ini(self, key: str, value: bool):
         try:
@@ -455,6 +526,7 @@ class ParserManhwaTab(QWidget):
             self.lbl_out.set_full_text(d)
             self.lbl_out.setText(d)
             self.lbl_out.setStyleSheet("color:#080")
+            self._refresh_stitch_dir_label()
             self._refresh_run_enabled()
             self.btn_open_dir.setEnabled(True)
 
@@ -472,9 +544,7 @@ class ParserManhwaTab(QWidget):
         if d:
             self._stitch_dir = d
             self._save_str_ini("stitch_dir", d)
-            self.lbl_stitch_dir.set_full_text(d)
-            self.lbl_stitch_dir.setText(d)
-            self.lbl_stitch_dir.setStyleSheet("color:#080")
+            self._refresh_stitch_dir_label()
 
     # ===== UI state updates =====
     def _update_png_controls(self):
@@ -488,18 +558,28 @@ class ParserManhwaTab(QWidget):
         on = self.chk_auto.isChecked()
         for w in [
             self.chk_no_resize, self.spin_width, self.chk_same_dir, self.btn_pick_stitch,
-            self.chk_delete, self.chk_opt, self.spin_comp, self.chk_strip, self.spin_per
+            self.chk_delete, self.chk_opt, self.spin_comp, self.chk_strip, self.spin_per, self.spin_zeros,
+            self.lbl_stitch_text, self.lbl_stitch_dir, self.grp_png, self.lbl_per, self.lbl_zeros, self.grp_dim,
         ]:
             w.setEnabled(on)
         self._update_same_dir()
         self._update_no_resize()
         self._update_png_controls()
+        self._refresh_stitch_dir_label()
 
     def _update_no_resize(self):
         self.spin_width.setEnabled(self.chk_auto.isChecked() and not self.chk_no_resize.isChecked())
 
     def _update_same_dir(self):
-        self.btn_pick_stitch.setEnabled(self.chk_auto.isChecked() and not self.chk_same_dir.isChecked())
+        on_auto = self.chk_auto.isChecked()
+        pick_on = on_auto and (not self.chk_same_dir.isChecked())
+
+        self.btn_pick_stitch.setEnabled(pick_on)
+        # чтобы «угасали» подпись и путь:
+        self.lbl_stitch_text.setEnabled(pick_on)
+        self.lbl_stitch_dir.setEnabled(pick_on)
+
+        self._refresh_stitch_dir_label()
 
     def _update_mode(self):
         new_mode = (
@@ -587,6 +667,7 @@ class ParserManhwaTab(QWidget):
             compress_level=int(self.spin_comp.value()),
             strip_metadata=self.chk_strip.isChecked(),
             per=int(self.spin_per.value()),
+            zeros=int(self.spin_zeros.value()),
             auto_confirm_purchase=self.chk_auto_buy.isChecked(),
             auto_confirm_use_rental=self.chk_auto_use_ticket.isChecked(),
             auto_threads=self.chk_auto_threads.isChecked(),
@@ -623,7 +704,19 @@ class ParserManhwaTab(QWidget):
             color = "#fa0"
         self.txt_log.append(f'<span style="color:{color}">{msg}</span>')
 
+    def _refresh_stitch_dir_label(self):
+        use_same = self.chk_same_dir.isChecked()
+        path = (self._out_dir if use_same else self._stitch_dir) or ""
+        text = path or "— не выбрано —"
 
+        self.lbl_stitch_dir.set_full_text(text)
+        self.lbl_stitch_dir.setText(text)
+
+        if not self.lbl_stitch_dir.isEnabled():
+            color = "#454545"
+        else:
+            color = "#080" if path else "#a00"
+        self.lbl_stitch_dir.setStyleSheet(f"color:{color}")
 
     @Slot()
     def _start(self):
@@ -719,17 +812,18 @@ class ParserManhwaTab(QWidget):
             bind_checkbox(self.chk_delete, "delete_sources", True)
             bind_checkbox(self.chk_opt, "optimize_png", True)
             bind_checkbox(self.chk_strip, "strip_metadata", True)
-            bind_checkbox(self.chk_auto_threads, "auto_threads", True)
-            bind_spinbox(self.spin_threads, "threads", max(2, (os.cpu_count() or 4) // 2))
-            self.spin_threads.setEnabled(not self.chk_auto_threads.isChecked())
+            bind_spinbox(self.spin_zeros, "zeros", 2)
+
+            self._refresh_stitch_dir_label()
+
+            bind_checkbox(self.chk_auto_threads, "auto_threads", DEFAULTS["auto_threads"])
+            bind_spinbox(self.spin_threads, "threads", DEFAULTS["threads"])
+            self._apply_threads_state()
 
         self.lbl_out.set_full_text(self._out_dir or "— не выбрано —")
         self.lbl_out.setStyleSheet("color:#228B22" if self._out_dir else "color:#B32428")
         self.btn_open_dir.setEnabled(bool(self._out_dir))
 
-
-        self.lbl_stitch_dir.set_full_text(self._stitch_dir or "— не выбрано —")
-        self.lbl_stitch_dir.setStyleSheet("color:#228B22" if self._stitch_dir else "color:#B32428")
 
         self._update_mode()
         self.chk_auto.toggled.connect(self._on_auto_toggled)

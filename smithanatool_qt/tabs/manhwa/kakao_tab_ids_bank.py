@@ -40,7 +40,7 @@ class IdsBankPanel:
 
         self.ids_table = QTableWidget(0, 2)
         self.ids_table.setHorizontalHeaderLabels(["Название", "ID"])
-        self.ids_table.setFixedHeight(120)
+        self.ids_table.setFixedHeight(200)
         self.ids_table.horizontalHeader().setStretchLastSection(True)
         self.ids_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.ids_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)

@@ -36,6 +36,8 @@ class TransformTab(QWidget):
         self.splitter = splitter
 
         lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 15, 0, 10)
+        lay.setSpacing(0)
         lay.addWidget(splitter)
 
         # Сигналы: выбор файла -> предпросмотр

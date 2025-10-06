@@ -11,12 +11,14 @@ from .stitch import _auto_stitch_chapter
 from .graphql_client import KakaoGraphQL
 from .dom import _try_use_rental_ticket, _collect_dom_urls
 
+
 def _make_pre_action_buy_and_use(series_id: int, product_id: int, log=None):
     """
     Returns pre_action(page) that purchases a RentSingle ticket via GraphQL
     and then tries to use the ticket to open the chapter. Runs inside the page
     so cookies/CSRF/session are reused.
     """
+
     def _pre_action(page):
         try:
             result = page.evaluate(
@@ -57,7 +59,7 @@ def _make_pre_action_buy_and_use(series_id: int, product_id: int, log=None):
                     if (!rent) {
                       return { purchased: false, reason: "no_rent_single" };
                     }
-                    
+
                     // 1) купить тикет аренды
                     const mBuy = `
                       mutation buyTicket($input: TicketBuyMutationInput!) {
@@ -124,7 +126,9 @@ def _make_pre_action_buy_and_use(series_id: int, product_id: int, log=None):
 
     return _pre_action
 
+
 import re, json, time
+
 
 def run_parser(
         title_id: str,
@@ -152,8 +156,8 @@ def run_parser(
     log = on_log or (lambda s: None)
     sid = int(title_id)
 
-    session_dir = str(Path(out_dir or "."))             # где хранится kakao_auth.json
-    series_dir  = str(Path(out_dir or ".") / str(sid))  # куда кладём главы и urls.json
+    session_dir = str(Path(out_dir or "."))  # где хранится kakao_auth.json
+    series_dir = str(Path(out_dir or ".") / str(sid))  # куда кладём главы и urls.json
     ensure_dir(series_dir)
 
     cache_dir = str(Path(series_dir) / "cache")
@@ -167,7 +171,6 @@ def run_parser(
     )
     gql = KakaoGraphQL(cookie_raw=cookie_raw)
 
-
     if login_aborted:
         raise RuntimeError("[CANCEL] Авторизация отменена пользователем.")
 
@@ -180,7 +183,6 @@ def run_parser(
         if login_aborted:
             raise RuntimeError("[CANCEL] Авторизация отменена пользователем.")
         return
-
 
     all_rows = []
     epmap_path = Path(cache_dir) / "episode_map.json"
@@ -227,8 +229,10 @@ def run_parser(
     elif chapter_spec:
         for n in parse_chapter_spec(chapter_spec):
             pid = num_to_id.get(int(n))
-            if pid: targets.append(pid)
-            else:   log(f"[DEBUG] Нет номера {n} (возможно, пролог/трейлер)")
+            if pid:
+                targets.append(pid)
+            else:
+                log(f"[DEBUG] Нет номера {n} (возможно, пролог/трейлер)")
     elif by_index or by_index_spec:
         rows = list(reversed(all_rows))  # chronological
         pids = [str(_ep["productId"]) for _ep in rows if _ep.get("productId")]
@@ -238,7 +242,8 @@ def run_parser(
             idx_list = [int(by_index)]
         else:
             idx_list = []
-        seen = set(); idx_uniq = []
+        seen = set();
+        idx_uniq = []
         for x in idx_list:
             if x not in seen: idx_uniq.append(x); seen.add(x)
         for x in idx_uniq:
@@ -285,18 +290,20 @@ def run_parser(
 
         need_ticket = read_access in ("notpurchased", "expired")
 
-        
         # --- Если глава недоступна: спрашиваем об использовании 대여권 / или предложим купить
         if need_ticket:
             rental_count = int(my.get("ticketRentalCount") or 0)
             own_count = int(my.get("ticketOwnCount") or 0)
             balance = int(my.get("cashAmount")) if my.get("cashAmount") is not None else None
-            if log: log("[DEBUG] access=%s rental=%s own=%s balance=%s available=%s" % (read_access, rental_count, own_count, balance, available))
+            if log: log("[DEBUG] access=%s rental=%s own=%s balance=%s available=%s" % (
+            read_access, rental_count, own_count, balance, available))
 
             if rental_count > 0:
-                use_it = on_confirm_use_rental(rental_count, own_count, balance, chapter_label) if on_confirm_use_rental else False
+                use_it = on_confirm_use_rental(rental_count, own_count, balance,
+                                               chapter_label) if on_confirm_use_rental else False
                 if not use_it:
                     continue
+
                 def _pre_action(page):
                     return _try_use_rental_ticket(page, log=log)
             else:
@@ -319,7 +326,6 @@ def run_parser(
 
         else:
             _pre_action = None
-
 
         # --- 1) собираем URL из DOM (с pre_action, если был нужен тикет)
         try:

@@ -5,7 +5,7 @@ import os
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QAbstractItemView, QComboBox, QListWidgetItem, QMessageBox
+    QAbstractItemView, QComboBox, QListWidgetItem, QMessageBox, QFrame
 )
 from PySide6.QtGui import QGuiApplication, QKeySequence, QAction
 
@@ -33,6 +33,8 @@ class GalleryPanel(QWidget, IniStringsMixin):
         self._forget_cb: Optional[Callable[[list[str]], None]] = None
 
         v = QVBoxLayout(self)
+        v.setContentsMargins(15, 0, 12, 0)
+        v.setSpacing(6)
 
         # ——— Панель открытия ———
         row_open = QHBoxLayout()
@@ -57,6 +59,7 @@ class GalleryPanel(QWidget, IniStringsMixin):
         # ——— Список файлов ———
         v.addWidget(QLabel("Файлы"))
         self.list = RightSelectableList()
+        self.list.setFrameShape(QFrame.NoFrame)
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.list.setDragEnabled(True)
         self.list.setAcceptDrops(True)
@@ -77,6 +80,8 @@ class GalleryPanel(QWidget, IniStringsMixin):
         row_move = QHBoxLayout()
         self.btn_up = QPushButton("↑")
         self.btn_down = QPushButton("↓")
+        for b in (self.btn_up, self.btn_down):
+            b.setFixedSize(40, 30)
         row_move.addWidget(self.btn_up)
         row_move.addWidget(self.btn_down)
         row_move.addStretch(1)

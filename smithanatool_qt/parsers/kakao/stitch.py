@@ -65,6 +65,8 @@ def _auto_stitch_chapter(chapter_dir: str, *, auto_cfg: dict, log=None, stop_fla
     auto_threads = bool(auto_cfg.get("auto_threads"))
     threads = int(auto_cfg.get("threads") or 4)
 
+    digits = max(1, min(6, int(auto_cfg.get("zeros") or auto_cfg.get("digits") or 2)))
+
     out_dir = chapter_dir if (same_dir or not out_dir_pref) else out_dir_pref
     os.makedirs(out_dir, exist_ok=True)
 
@@ -74,7 +76,8 @@ def _auto_stitch_chapter(chapter_dir: str, *, auto_cfg: dict, log=None, stop_fla
         return
 
     groups = [files[i:i+per] for i in range(0, len(files), per)]
-    def out_name(i: int) -> str: return f"{i:02d}.png"
+    def out_name(i: int) -> str:
+        return f"{i:0{digits}d}.png"
 
     max_workers = _compute_workers(auto_threads, threads)
 
@@ -89,8 +92,8 @@ def _auto_stitch_chapter(chapter_dir: str, *, auto_cfg: dict, log=None, stop_fla
         for fut in as_completed(futs):
             if stop_flag and stop_flag(): break
             i, ok, path = fut.result()
-            if ok and log: log(f"[OK] Склейка {i:02d} → {path}")
-            elif log: log(f"[WARN] Склейка {i:02d} не удалась.")
+            if ok and log: log(f"[OK] Склейка {i:0{digits}d} → {path}")
+            elif log: log(f"[WARN] Склейка {i:0{digits}d} не удалась.")
 
     if delete_sources and not (stop_flag and stop_flag()):
         try:

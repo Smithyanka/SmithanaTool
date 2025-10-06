@@ -3,11 +3,13 @@ from typing import List
 import os, sys, subprocess
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QSpinBox,
-    QCheckBox, QFileDialog, QMessageBox, QProgressDialog, QApplication
+    QCheckBox, QFileDialog, QMessageBox, QProgressDialog, QApplication, QListView, QTreeView, QAbstractItemView, QLineEdit, QGridLayout, QDialogButtonBox, QSplitter, QSizePolicy, QToolButton, QFrame
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QAction
+import re
+from PySide6.QtCore import Qt, QTimer, QTranslator, QLocale, QLibraryInfo, Signal
 from .converters.png_gif import filter_images as filter_png_for_gif, convert_png_to_gif
-from .converters.png_pdf import filter_images as filter_png_for_pdf, convert_png_to_pdf, merge_pngs_to_pdf
+from .converters.png_pdf import filter_images as filter_png_for_pdf, convert_png_to_pdf, merge_pngs_to_pdf, merge_images_to_pdf
 from .converters.psd_png import filter_psd, convert_psd_to_png
 
 from smithanatool_qt.settings_bind import (
@@ -16,7 +18,70 @@ from smithanatool_qt.settings_bind import (
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .converters.any_png import filter_non_psd as filter_any_for_png, convert_any_to_png
+from smithanatool_qt.tabs.common.bind import apply_bindings
+from smithanatool_qt.tabs.common.defaults import DEFAULTS
 
+class CollapsibleSection(QWidget):
+    toggled = Signal(bool)  # True = развернуто
+
+    def __init__(self, title: str, start_collapsed: bool = False, parent=None):
+        super().__init__(parent)
+        self._main = QVBoxLayout(self); self._main.setContentsMargins(0, 0, 0, 0)
+        self._main.setSpacing(6)
+
+        self.setObjectName("collSection")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet("""
+            #collSection {
+                border: 1px solid palette(mid);
+                border-radius: 4px;
+                background: transparent;
+            }
+        """)
+        # добавьте «пэддинги» у корневого лейаута, чтобы контент не прилипал к рамке
+        self._main.setContentsMargins(8, 8, 8, 8)
+        self._main.setSpacing(6)
+
+        # Заголовок-кнопка
+        self._btn = QToolButton(self)
+        self._btn.setText(title)
+        self._btn.setCheckable(True)
+        self._btn.setChecked(not start_collapsed)   # checked == expanded
+
+        self._btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)  # стрелка слева, текст справа
+        self._btn.setAutoRaise(True)  # убирает «кнопочный» вид
+        self._btn.setFocusPolicy(Qt.NoFocus)  # без фокуса-рамки
+        self._btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # кликабельна вся строка
+        self._btn.setStyleSheet("""
+            QToolButton { background: transparent; border: none; padding: 4px 0; }
+            QToolButton:hover { background: transparent; }
+            QToolButton:pressed { background: transparent; }
+        """)
+        self._btn.setArrowType(Qt.DownArrow if self._btn.isChecked() else Qt.RightArrow)
+        self._btn.clicked.connect(self._on_clicked)
+        self._main.addWidget(self._btn)
+
+        # Контент
+        self._content = QFrame(self)
+        self._content.setFrameShape(QFrame.NoFrame)
+        self.content_layout = QVBoxLayout(self._content)
+        self.content_layout.setContentsMargins(12, 4, 12, 8)
+        self._main.addWidget(self._content)
+
+        self._content.setVisible(self._btn.isChecked())
+
+    def _on_clicked(self):
+        expanded = self._btn.isChecked()
+        self._btn.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self._content.setVisible(expanded)
+        self.toggled.emit(expanded)
+
+    # Удобные методы, если пригодятся
+    def set_collapsed(self, collapsed: bool):
+        self._btn.setChecked(not collapsed); self._on_clicked()
+
+    def is_collapsed(self) -> bool:
+        return not self._btn.isChecked()
 
 def _open_in_explorer(path: str):
     try:
@@ -32,20 +97,26 @@ def _open_in_explorer(path: str):
 class ConversionsPanel(QWidget):
     def __init__(self, gallery=None, parent=None):
         super().__init__(parent)
+        self._ensure_qt_ru()
         self._gallery = gallery
         v = QVBoxLayout(self); v.setAlignment(Qt.AlignTop)
 
         # GIF
-        box_gif = QGroupBox("GIF конвертор");
-        g = QVBoxLayout(box_gif)
+        gif_collapsed = (self._ini_load_str("gif_collapsed", "1") == "1")
+        self.box_gif = CollapsibleSection("GIF конвертор", start_collapsed=gif_collapsed)
+        self.box_gif.toggled.connect(lambda expanded: self._save_bool_ini("gif_collapsed", not expanded))
+        g = self.box_gif.content_layout
 
         # Ряд 1: Авто потоки + Потоки
         row_g1 = QHBoxLayout()
         self.gif_auto_threads = QCheckBox("Авто потоки");
-        self.gif_auto_threads.setChecked(True);
-        row_g1.addWidget(self.gif_auto_threads)
+        self.gif_auto_threads.setChecked(True)
+        row_g1.addWidget(self.gif_auto_threads);
         row_g1.addSpacing(12)
-        row_g1.addWidget(QLabel("Потоки:"))
+
+        self.gif_lbl_threads = QLabel("Потоки:")
+        row_g1.addWidget(self.gif_lbl_threads)
+
         self.gif_threads = QSpinBox();
         self.gif_threads.setRange(1, 32)
         _default_thr = min(32, max(2, (os.cpu_count() or 4) // 2))
@@ -64,15 +135,18 @@ class ConversionsPanel(QWidget):
 
         # Ряд 2: кнопки
         row_g2 = QHBoxLayout();
+        row_g2.setContentsMargins(0, 8, 0, 0)
         row_g2.addStretch(1)
-        self.btn_gif_convert_sel = QPushButton("Преобразовать выделенные")
+        self.btn_gif_convert_sel = QPushButton("Преобразовать")
         self.btn_gif_convert_pick = QPushButton("Выбрать файлы…")
         row_g2.addWidget(self.btn_gif_convert_sel);
         row_g2.addWidget(self.btn_gif_convert_pick)
         g.addLayout(row_g2)
         # PDF
-        box_pdf = QGroupBox("PDF конвертор");
-        p = QVBoxLayout(box_pdf)
+        pdf_collapsed = (self._ini_load_str("pdf_collapsed", "1") == "1")
+        self.box_pdf = CollapsibleSection("PDF конвертор", start_collapsed=pdf_collapsed)
+        self.box_pdf.toggled.connect(lambda expanded: self._save_bool_ini("pdf_collapsed", not expanded))
+        p = self.box_pdf.content_layout
 
         # Ряд 1: Качество + DPI
         row_p1 = QHBoxLayout()
@@ -100,26 +174,34 @@ class ConversionsPanel(QWidget):
 
         # Ряд 2: кнопки
         row_p2 = QHBoxLayout();
+        row_p2.setContentsMargins(0, 8, 0, 0)
         row_p2.addStretch(1)
-        self.btn_pdf_convert_sel = QPushButton("Преобразовать выделенные")
+        self.btn_pdf_convert_sel = QPushButton("Преобразовать")
         self.btn_pdf_convert_pick = QPushButton("Выбрать файлы…")
+        self.btn_pdf_pick_dirs = QPushButton("Выбрать папки…")
         row_p2.addWidget(self.btn_pdf_convert_sel);
         row_p2.addWidget(self.btn_pdf_convert_pick)
+        row_p2.addWidget(self.btn_pdf_pick_dirs)
         p.addLayout(row_p2)
         # PSD
-        box_psd = QGroupBox("PSD → PNG конвертор");
-        s = QVBoxLayout(box_psd)
+        psd_collapsed = (self._ini_load_str("psd_collapsed", "1") == "1")
+        self.box_psd = CollapsibleSection("PSD → PNG конвертор", start_collapsed=psd_collapsed)
+        self.box_psd.toggled.connect(lambda expanded: self._save_bool_ini("psd_collapsed", not expanded))
+        s = self.box_psd.content_layout
 
         # Ряд 1: Авто потоки + Потоки
         row_s1 = QHBoxLayout()
         self.psd_auto_threads = QCheckBox("Авто потоки");
-        self.psd_auto_threads.setChecked(True);
-        row_s1.addWidget(self.psd_auto_threads)
+        self.psd_auto_threads.setChecked(True)
+        row_s1.addWidget(self.psd_auto_threads);
         row_s1.addSpacing(12)
-        row_s1.addWidget(QLabel("Потоки:"))
+
+        self.psd_lbl_threads = QLabel("Потоки:")
+        row_s1.addWidget(self.psd_lbl_threads)
+
         self.psd_threads = QSpinBox();
         self.psd_threads.setRange(1, 8);
-        self.psd_threads.setValue(8);
+        self.psd_threads.setValue(8)
         row_s1.addWidget(self.psd_threads)
         row_s1.addStretch(1)
         s.addLayout(row_s1)
@@ -142,8 +224,9 @@ class ConversionsPanel(QWidget):
         s.addLayout(row_s2)
 
         row_s3 = QHBoxLayout()
+        row_s3.setContentsMargins(0, 8, 0, 0)
         row_s3.addStretch(1)
-        self.btn_psd_convert_sel = QPushButton("Преобразовать выделенные")
+        self.btn_psd_convert_sel = QPushButton("Преобразовать")
         self.btn_psd_pick = QPushButton("Выбрать файлы...")
         row_s3.addWidget(self.btn_psd_convert_sel)
         row_s3.addWidget(self.btn_psd_pick)
@@ -154,25 +237,30 @@ class ConversionsPanel(QWidget):
             "Примечание: При выборе 1 или 2 очень больших файлов желательно выставлять 1-2 потока."
         )
         self.psd_note.setWordWrap(True)
-        self.psd_note.setStyleSheet("color: #666; font-size: 12px;")
+        self.psd_note.setStyleSheet("color: #454545; font-size: 12px;")
         s.addSpacing(6)
         s.addWidget(self.psd_note)
 
         # PNG
-        box_png = QGroupBox("PNG конвертор");
-        n = QVBoxLayout(box_png)
+        png_collapsed = (self._ini_load_str("png_collapsed", "1") == "1")
+        self.box_png = CollapsibleSection("PNG конвертор", start_collapsed=png_collapsed)
+        self.box_png.toggled.connect(lambda expanded: self._save_bool_ini("png_collapsed", not expanded))
+        n = self.box_png.content_layout
 
         # Ряд 1: Авто потоки + Потоки
         row_n1 = QHBoxLayout()
         self.png_auto_threads = QCheckBox("Авто потоки");
-        self.png_auto_threads.setChecked(True);
-        row_n1.addWidget(self.png_auto_threads)
+        self.png_auto_threads.setChecked(True)
+        row_n1.addWidget(self.png_auto_threads);
         row_n1.addSpacing(12)
-        row_n1.addWidget(QLabel("Потоки:"))
+
+        self.png_lbl_threads = QLabel("Потоки:")
+        row_n1.addWidget(self.png_lbl_threads)
+
         self.png_threads = QSpinBox();
-        self.png_threads.setRange(1, 32);
+        self.png_threads.setRange(1, 32)
         _default_thr_png = min(32, max(2, (os.cpu_count() or 4) // 2))
-        self.png_threads.setValue(_default_thr_png);
+        self.png_threads.setValue(_default_thr_png)
         row_n1.addWidget(self.png_threads)
         row_n1.addStretch(1)
         n.addLayout(row_n1)
@@ -196,6 +284,7 @@ class ConversionsPanel(QWidget):
 
         # Ряд 3: кнопки
         row_n3 = QHBoxLayout()
+        row_n3.setContentsMargins(0, 8, 0, 0)
         row_n3.addStretch(1)
         self.btn_png_convert_sel = QPushButton("Преобразовать выделенные")
         self.btn_png_convert_pick = QPushButton("Выбрать файлы…")
@@ -203,7 +292,7 @@ class ConversionsPanel(QWidget):
         row_n3.addWidget(self.btn_png_convert_pick)
         n.addLayout(row_n3)
 
-        v.addWidget(box_gif); v.addWidget(box_pdf); v.addWidget(box_psd); v.addWidget(box_png); v.addStretch(1)
+        v.addWidget(self.box_gif); v.addWidget(self.box_pdf); v.addWidget(self.box_psd); v.addWidget(self.box_png); v.addStretch(1)
 
 
         # UI state hooks
@@ -219,33 +308,261 @@ class ConversionsPanel(QWidget):
         self.btn_psd_convert_sel.clicked.connect(self._psd_convert_selected)
         self.btn_png_convert_sel.clicked.connect(self._png_convert_selected)
         self.btn_png_convert_pick.clicked.connect(self._png_convert_pick)
+        self.btn_pdf_pick_dirs.clicked.connect(self._pdf_pick_dirs)
 
-        # --- persist changes to INI ---
-        self.gif_dither.toggled.connect(lambda v: self._save_bool_ini("gif_dither", v))
-        self.gif_auto_threads.toggled.connect(lambda v: self._save_bool_ini("gif_auto_threads", v))
-        self.gif_threads.valueChanged.connect(lambda v: self._save_int_ini("gif_threads", v))
-
-        self.png_replace.toggled.connect(lambda v: self._save_bool_ini("png_replace", v))
-        self.png_auto_threads.toggled.connect(lambda v: self._save_bool_ini("png_auto_threads", v))
-        self.png_threads.valueChanged.connect(lambda v: self._save_int_ini("png_threads", v))
-        self.png_compress.valueChanged.connect(lambda v: self._save_int_ini("png_compress", v))
-
-        self.pdf_quality.valueChanged.connect(lambda v: self._save_int_ini("pdf_quality", v))
-        self.pdf_dpi.valueChanged.connect(lambda v: self._save_int_ini("pdf_dpi", v))
-        self.pdf_one_file.toggled.connect(lambda v: self._save_bool_ini("pdf_one_file", v))
-        self.psd_replace.toggled.connect(lambda v: self._save_bool_ini("psd_replace", v))
-        self.psd_auto_threads.toggled.connect(lambda v: self._save_bool_ini("psd_auto_threads", v))
-        self.psd_threads.valueChanged.connect(lambda v: self._save_int_ini("psd_threads", v))
-        self.psd_compress.valueChanged.connect(lambda v: self._save_int_ini("psd_compress", v))
 
 
         QTimer.singleShot(0, self._apply_settings_from_ini)
 
-    def _apply_png_threads_state(self):
+    def _ensure_qt_ru(self):
+        app = QApplication.instance()
+        if not app or getattr(app, "_qt_ru_installed", False):
+            return
+
         try:
-            self.png_threads.setEnabled(not self.png_auto_threads.isChecked())
+            # Глобально русская локаль
+            QLocale.setDefault(QLocale(QLocale.Russian, QLocale.Russia))
         except Exception:
             pass
+
+        tr_path = QLibraryInfo.path(QLibraryInfo.TranslationsPath)
+        installed = []
+
+        # qtbase_ru
+        try:
+            tr1 = QTranslator(app)
+            ok1 = tr1.load(QLocale("ru_RU"), "qtbase", "_", tr_path) or tr1.load("qtbase_ru", tr_path)
+            if ok1:
+                app.installTranslator(tr1)
+                installed.append(tr1)
+        except Exception:
+            pass
+
+        # qt_ru (иногда не требуется, но не помешает)
+        try:
+            tr2 = QTranslator(app)
+            ok2 = tr2.load(QLocale("ru_RU"), "qt", "_", tr_path) or tr2.load("qt_ru", tr_path)
+            if ok2:
+                app.installTranslator(tr2)
+                installed.append(tr2)
+        except Exception:
+            pass
+
+        # пометить, что уже установили
+        app._qt_ru_installed = True
+        # сохранить ссылки, чтобы сборщик мусора не выгрузил
+        self._qt_ru_translators = installed
+
+    def _ask_open_directories_multi(self, title: str, ini_key: str) -> list[str]:
+        """
+        Ненативный QFileDialog с мультивыбором директорий (Ctrl/Shift),
+        без левого сайдбара. Стандартная панель навигации Qt остаётся.
+        Поле «Каталог»: после ввода пути через 300 мс просто переходим в папку
+        (ничего не выделяя). Поддерживаются относительные пути (например, "08").
+        Кнопка «Создать папку» скрыта.
+        """
+        start_dir = self._ini_load_str(ini_key, os.path.expanduser("~"))
+
+        dlg = QFileDialog(self, title)
+        dlg.setFileMode(QFileDialog.Directory)
+        dlg.setOption(QFileDialog.ShowDirsOnly, True)
+        dlg.setOption(QFileDialog.DontUseNativeDialog, True)  # для мультивыбора папок
+        dlg.setDirectory(start_dir)
+
+        # Разрешаем расширенный выбор в списке/дереве (кроме sidebar)
+        for v in dlg.findChildren(QListView) + dlg.findChildren(QTreeView):
+            if v.objectName() != "sidebar":
+                v.setSelectionMode(QAbstractItemView.ExtendedSelection)
+
+        # Скрыть левую боковую панель (sidebar) и схлопнуть сплиттер
+        try:
+            for side in dlg.findChildren(QListView, "sidebar"):
+                side.hide()
+            for w in dlg.findChildren(QWidget):
+                if w.objectName() == "sidebar":
+                    w.hide()
+            for sp in dlg.findChildren(QSplitter):
+                sizes = sp.sizes()
+                if len(sizes) >= 2:
+                    sp.setSizes([0] + sizes[1:])
+        except Exception:
+            pass
+
+        # ---------- СКРЫТЬ кнопку «Создать папку» ----------
+        try:
+            # Спрятать кнопку на тулбаре
+            for b in dlg.findChildren(QToolButton):
+                tt = (b.toolTip() or "").lower()
+                tx = (b.text() or "").lower()
+                if ("создать папку" in tt) or ("создать папку" in tx) or ("new folder" in tt) or ("new folder" in tx):
+                    b.hide()
+            # Отключить одноимённые действия (на случай хоткеев)
+            for act in dlg.findChildren(QAction):
+                txt = (act.text() or "").lower().replace("&", "")
+                ttp = (act.toolTip() or "").lower()
+                if ("создать папку" in txt) or ("создать папку" in ttp) or ("new folder" in txt) or ("new folder" in ttp):
+                    act.setEnabled(False)
+                    act.setVisible(False)
+        except Exception:
+            pass
+        # ---------------------------------------------------
+
+        # --- Автопереход по полю «Каталог» через 300 мс ---
+        try:
+            # В ненативном диалоге у поля обычно objectName == "fileNameEdit"
+            dir_edit = dlg.findChild(QLineEdit, "fileNameEdit")
+            if dir_edit is None:
+                edits = [e for e in dlg.findChildren(QLineEdit) if e.isVisible()]
+                if edits:
+                    dir_edit = sorted(edits, key=lambda e: e.geometry().y())[-1]
+
+            if dir_edit is not None:
+                nav_timer = QTimer(dlg)
+                nav_timer.setInterval(300)
+                nav_timer.setSingleShot(True)
+
+                def _navigate():
+                    raw = (dir_edit.text() or "").strip().strip('"')
+                    if not raw:
+                        return
+                    # Абсолютный или относительный путь
+                    path = raw
+                    try:
+                        cur = dlg.directory().absolutePath()
+                    except Exception:
+                        cur = start_dir
+                    if not os.path.isabs(path):
+                        path = os.path.join(cur, raw)
+                    if os.path.isdir(path):
+                        try:
+                            dlg.setDirectory(path)  # переходим, но НЕ выделяем
+                        except Exception:
+                            pass
+
+                dir_edit.textEdited.connect(lambda _=None: nav_timer.start())
+                nav_timer.timeout.connect(_navigate)
+        except Exception:
+            pass
+        # --- конец автоперехода ---
+
+        if dlg.exec() == QFileDialog.Accepted:
+            paths = [p for p in dlg.selectedFiles() if os.path.isdir(p)]
+            if paths:
+                try:
+                    common = os.path.commonpath(paths)
+                except Exception:
+                    common = os.path.dirname(paths[0])
+                self._save_str_ini(ini_key, common)
+            return paths
+        return []
+
+    def _ensure_unique_path(self, path: str) -> str:
+        """Если файл уже существует, добавляет суффикс (2), (3), ..."""
+        root, ext = os.path.splitext(path)
+        cand = path
+        k = 2
+        while os.path.exists(cand):
+            cand = f"{root} ({k}){ext}"
+            k += 1
+        return cand
+
+    def _natural_key(self, s: str):
+        """Ключ для «естественной» сортировки: file2 < file10."""
+        return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', os.path.basename(s))]
+
+    def _pdf_pick_dirs(self):
+        """
+        PNG→PDF по папкам: выбор, сохранение и конвертация.
+        Исправление «белого окна» — сначала показываем диалог в режиме занятости (0..0),
+        принудительно отрисовываем его, затем переводим в обычный прогресс и запускаем пул.
+        """
+        dirs = self._ask_open_directories_multi("Выберите папки с изображениями", "pdf_pick_dirs")
+        if not dirs:
+            return
+
+        out_dir = self._ask_out_dir("Папка для PDF", "pdf_out_dir")
+        if not out_dir:
+            return
+
+        qual = int(self.pdf_quality.value())
+        dpi = int(self.pdf_dpi.value())
+
+        # --- ПРОГРЕСС-ДИАЛОГ: сначала «занятость», чтобы не было белого окна ---
+        dlg = QProgressDialog(self)
+        dlg.setWindowTitle("Конвертация")
+        dlg.setLabelText("PNG→PDF (папки): выполняется конвертация…")
+        dlg.setCancelButton(None)
+        dlg.setWindowModality(Qt.ApplicationModal)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setMinimumDuration(0)
+
+        # Показать сразу с занятым состоянием (появится полноценный прогрессбар)
+        dlg.setRange(0, 0)
+        dlg.setValue(0)
+        dlg.resize(dlg.sizeHint())
+        dlg.show()
+        QApplication.processEvents()  # дать Qt всё создать/раскрасить
+        dlg.repaint()
+        QApplication.processEvents()
+        # ----------------------------------------------------------------------
+
+        # Теперь переключаемся на детерминированный прогресс
+        dlg.setRange(0, len(dirs))
+        dlg.setValue(0)
+        QApplication.processEvents()
+
+        ok = 0
+        skipped = 0
+        errors: list[str] = []
+
+        # --- задача для одного каталога (в отдельном потоке) ---
+        def _task_dir(d: str):
+            try:
+                # только верхний уровень
+                candidates = [os.path.join(d, name) for name in os.listdir(d)
+                              if os.path.isfile(os.path.join(d, name))]
+                imgs = filter_png_for_pdf(candidates)
+                imgs.sort(key=self._natural_key)
+
+                if not imgs:
+                    return ("skipped", d, None)
+
+                base_name = os.path.basename(os.path.normpath(d)) or "output"
+                dst_pdf = self._ensure_unique_path(os.path.join(out_dir, f"{base_name}.pdf"))
+
+                success, msg = merge_images_to_pdf(imgs, dst_pdf, jpeg_quality=qual, dpi=dpi)
+                return ("ok", d, None) if success else ("error", d, f"{base_name}: {msg}")
+            except Exception as e:
+                return ("error", d, f"{os.path.basename(d) or d}: {e}")
+
+        # --- пул потоков без заморозки UI ---
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        workers = min(max(1, (os.cpu_count() or 2) // 2), 8)
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = [ex.submit(_task_dir, d) for d in dirs]
+            for i, fut in enumerate(as_completed(futs), 1):
+                try:
+                    status, d, msg = fut.result()
+                    if status == "ok":
+                        ok += 1
+                    elif status == "skipped":
+                        skipped += 1
+                    elif status == "error" and msg:
+                        errors.append(msg)
+                except Exception as e:
+                    errors.append(str(e))
+                finally:
+                    dlg.setValue(i)
+                    QApplication.processEvents()
+
+        dlg.close()
+        self._show_done_box(out_dir, f"PNG→PDF (папки): успешно {ok}/{len(dirs)}, пустых {skipped}")
+        if errors:
+            uniq = list(dict.fromkeys(errors))[:5]
+            QMessageBox.warning(self, "PNG→PDF (папки)", "Некоторые папки не обработаны:\n" + "\n".join(uniq))
+
+
     def reset_to_defaults(self):
         # дефолты
         d = dict(
@@ -307,25 +624,47 @@ class ConversionsPanel(QWidget):
         self._apply_gif_threads_state()
         self._apply_psd_threads_state()
 
+        #  сброс состояний секций конверторов
+        # self._save_bool_ini("gif_collapsed", True)
+        # self._save_bool_ini("pdf_collapsed", True)
+        # self._save_bool_ini("psd_collapsed", True)
+        # self._save_bool_ini("png_collapsed", True)
+        #
+        # for w in (getattr(self, "box_gif", None),
+        #           getattr(self, "box_pdf", None),
+        #           getattr(self, "box_psd", None),
+        #           getattr(self, "box_png", None)):
+        #     if w is None:
+        #         continue
+        #     prev = w.blockSignals(True)
+        #     w.set_collapsed(True)
+        #     w.blockSignals(prev)
+
     def _apply_settings_from_ini(self):
-        with group("ConversionsPanel"):
-            bind_checkbox(self.gif_dither, "gif_dither", True)
-            bind_checkbox(self.gif_auto_threads, "gif_auto_threads", True)
-            bind_spinbox(self.gif_threads, "gif_threads", min(32, max(2, (os.cpu_count() or 4)//2)))
+        apply_bindings(self, "ConversionsPanel", [
+            # GIF
+            (self.gif_dither, "gif_dither", True),
+            (self.gif_auto_threads, "gif_auto_threads", True),
+            (self.gif_threads, "gif_threads", DEFAULTS["threads"]),
 
-            bind_spinbox(self.pdf_quality, "pdf_quality", 92)
-            bind_spinbox(self.pdf_dpi, "pdf_dpi", 100)
-            bind_checkbox(self.pdf_one_file, "pdf_one_file", True)
-            bind_checkbox(self.psd_replace, "psd_replace", False)
-            bind_checkbox(self.psd_auto_threads, "psd_auto_threads", True)
-            bind_spinbox(self.psd_threads, "psd_threads", 8)
-            bind_spinbox(self.psd_compress, "psd_compress", 7)
+            # PDF
+            (self.pdf_quality, "pdf_quality", 92),
+            (self.pdf_dpi, "pdf_dpi", 100),
+            (self.pdf_one_file, "pdf_one_file", True),
 
-            bind_checkbox(self.png_replace, "png_replace", False)
-            bind_checkbox(self.png_auto_threads, "png_auto_threads", True)
-            bind_spinbox(self.png_threads, "png_threads", min(32, max(2, (os.cpu_count() or 4) // 2)))
-            bind_spinbox(self.png_compress, "png_compress", 6)
+            # PSD→PNG
+            (self.psd_replace, "psd_replace", False),
+            (self.psd_auto_threads, "psd_auto_threads", True),
+            (self.psd_threads, "psd_threads", 8),
+            (self.psd_compress, "psd_compress", 7),
 
+            # PNG
+            (self.png_replace, "png_replace", False),
+            (self.png_auto_threads, "png_auto_threads", True),
+            (self.png_threads, "png_threads", DEFAULTS["threads"]),
+            (self.png_compress, "png_compress", 6),
+        ])
+        # После биндинга — обновить доступность «Потоков»
         self._apply_gif_threads_state()
         self._apply_psd_threads_state()
         self._apply_png_threads_state()
@@ -385,11 +724,24 @@ class ConversionsPanel(QWidget):
         if path:
             self._save_str_ini(ini_key, os.path.dirname(path))
         return path or None
-    def _apply_psd_threads_state(self):
-        self.psd_threads.setEnabled(not self.psd_auto_threads.isChecked())
 
     def _apply_gif_threads_state(self):
-        self.gif_threads.setEnabled(not self.gif_auto_threads.isChecked())
+        on = not self.gif_auto_threads.isChecked()
+        self.gif_threads.setEnabled(on)
+        if hasattr(self, "gif_lbl_threads"):
+            self.gif_lbl_threads.setEnabled(on)
+
+    def _apply_psd_threads_state(self):
+        on = not self.psd_auto_threads.isChecked()
+        self.psd_threads.setEnabled(on)
+        if hasattr(self, "psd_lbl_threads"):
+            self.psd_lbl_threads.setEnabled(on)
+
+    def _apply_png_threads_state(self):
+        on = not self.png_auto_threads.isChecked()
+        self.png_threads.setEnabled(on)
+        if hasattr(self, "png_lbl_threads"):
+            self.png_lbl_threads.setEnabled(on)
 
     def _resolve_gif_threads(self) -> int:
         """Логика 'как в StitchSection': осторожный авто-подбор потоков."""
@@ -512,7 +864,8 @@ class ConversionsPanel(QWidget):
 
     def _show_done_box(self, out_dir: str, message: str):
         box = QMessageBox(self); box.setWindowTitle("Готово"); box.setText(message)
-        btn_open = box.addButton("Открыть папку", QMessageBox.ActionRole); box.addButton(QMessageBox.Ok)
+        btn_open = box.addButton("Открыть папку", QMessageBox.ActionRole)
+        box.addButton(QMessageBox.Ok)
         box.exec()
         if box.clickedButton() is btn_open:
             _open_in_explorer(out_dir)
