@@ -233,7 +233,7 @@ def apply_dark_theme(app):
         }}
         
         QScrollBar::handle:vertical {{
-            background: #222222;
+            background: #2c2c2c;
             border-radius: 4px;
             min-height: 24px;
         }}
@@ -253,14 +253,14 @@ def apply_dark_theme(app):
             background: transparent;
         }}
         
-        /* Горизонтальный — те же принципы */
+        /* Горизонтальный */
         QScrollBar:horizontal {{
-            height: 13px;
+            height: 10px;
             background: transparent;
             margin: 0;
         }}
         QScrollBar::handle:horizontal {{
-            background: #222222;
+            background: #2c2c2c;
             border-radius: 4px;
             min-width: 24px;
         }}

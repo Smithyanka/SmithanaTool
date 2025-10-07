@@ -41,6 +41,7 @@ def build_auto_stitch_section(self):
     self.chk_no_resize = QCheckBox("Не изменять ширину"); self.chk_no_resize.setChecked(True)
     self.lbl_width = QLabel("Ширина:")
     self.spin_width = QSpinBox(); self.spin_width.setRange(50, 20000); self.spin_width.setValue(800)
+    self.spin_width.setMinimumWidth(60)
 
     row_dim.addWidget(self.chk_no_resize)
     row_dim.addSpacing(8)

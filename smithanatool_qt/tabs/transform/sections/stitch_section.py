@@ -64,6 +64,8 @@ class StitchSection(QWidget):
         self.chk_no_resize = QCheckBox("Не изменять ширину")
         self.lbl_dim = QLabel("Ширина:")
         self.spin_dim = QSpinBox(); self.spin_dim.setRange(50, 20000); self.spin_dim.setValue(800)
+        self.spin_dim.setMinimumWidth(60)
+
         row_dim.addWidget(self.chk_no_resize); row_dim.addSpacing(8)
         row_dim.addWidget(self.lbl_dim); row_dim.addWidget(self.spin_dim); row_dim.addStretch(1)
         v.addWidget(grp_dim)
@@ -98,15 +100,15 @@ class StitchSection(QWidget):
         v.addWidget(grp_png)
 
         # Склейка по одной
-        grp_one = QGroupBox("Склейка по одной")
+        grp_one = QGroupBox("По одной")
         row_one = QHBoxLayout(grp_one); row_one.addStretch(1)
         self.btn_one = QPushButton("Склейка в один PNG")
         self.btn_one_pick = QPushButton("Выбрать файлы…")
         row_one.addWidget(self.btn_one); row_one.addWidget(self.btn_one_pick)
         v.addWidget(grp_one)
 
-        # Автосклейка
-        grp_auto = QGroupBox("Автосклейка")
+        # Склейка по несколько
+        grp_auto = QGroupBox("По несколько")
         av = QVBoxLayout(grp_auto)
         row_a1 = QHBoxLayout()
         row_a1.addWidget(QLabel("По сколько клеить:"))

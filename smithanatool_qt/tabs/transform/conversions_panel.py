@@ -38,7 +38,6 @@ class CollapsibleSection(QWidget):
                 background: transparent;
             }
         """)
-        # добавьте «пэддинги» у корневого лейаута, чтобы контент не прилипал к рамке
         self._main.setContentsMargins(8, 8, 8, 8)
         self._main.setSpacing(6)
 
@@ -348,19 +347,10 @@ class ConversionsPanel(QWidget):
         except Exception:
             pass
 
-        # пометить, что уже установили
         app._qt_ru_installed = True
-        # сохранить ссылки, чтобы сборщик мусора не выгрузил
         self._qt_ru_translators = installed
 
     def _ask_open_directories_multi(self, title: str, ini_key: str) -> list[str]:
-        """
-        Ненативный QFileDialog с мультивыбором директорий (Ctrl/Shift),
-        без левого сайдбара. Стандартная панель навигации Qt остаётся.
-        Поле «Каталог»: после ввода пути через 300 мс просто переходим в папку
-        (ничего не выделяя). Поддерживаются относительные пути (например, "08").
-        Кнопка «Создать папку» скрыта.
-        """
         start_dir = self._ini_load_str(ini_key, os.path.expanduser("~"))
 
         dlg = QFileDialog(self, title)
@@ -487,7 +477,7 @@ class ConversionsPanel(QWidget):
         qual = int(self.pdf_quality.value())
         dpi = int(self.pdf_dpi.value())
 
-        # --- ПРОГРЕСС-ДИАЛОГ: сначала «занятость», чтобы не было белого окна ---
+        # --- ПРОГРЕСС-ДИАЛОГ ---
         dlg = QProgressDialog(self)
         dlg.setWindowTitle("Конвертация")
         dlg.setLabelText("PNG→PDF (папки): выполняется конвертация…")
@@ -497,17 +487,16 @@ class ConversionsPanel(QWidget):
         dlg.setAutoReset(False)
         dlg.setMinimumDuration(0)
 
-        # Показать сразу с занятым состоянием (появится полноценный прогрессбар)
+        # Показать сразу с занятым состоянием
         dlg.setRange(0, 0)
         dlg.setValue(0)
         dlg.resize(dlg.sizeHint())
         dlg.show()
-        QApplication.processEvents()  # дать Qt всё создать/раскрасить
+        QApplication.processEvents()
         dlg.repaint()
         QApplication.processEvents()
         # ----------------------------------------------------------------------
 
-        # Теперь переключаемся на детерминированный прогресс
         dlg.setRange(0, len(dirs))
         dlg.setValue(0)
         QApplication.processEvents()
@@ -516,10 +505,8 @@ class ConversionsPanel(QWidget):
         skipped = 0
         errors: list[str] = []
 
-        # --- задача для одного каталога (в отдельном потоке) ---
         def _task_dir(d: str):
             try:
-                # только верхний уровень
                 candidates = [os.path.join(d, name) for name in os.listdir(d)
                               if os.path.isfile(os.path.join(d, name))]
                 imgs = filter_png_for_pdf(candidates)
@@ -536,7 +523,6 @@ class ConversionsPanel(QWidget):
             except Exception as e:
                 return ("error", d, f"{os.path.basename(d) or d}: {e}")
 
-        # --- пул потоков без заморозки UI ---
         from concurrent.futures import ThreadPoolExecutor, as_completed
         workers = min(max(1, (os.cpu_count() or 2) // 2), 8)
         with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -584,7 +570,6 @@ class ConversionsPanel(QWidget):
             png_compress=6,
         )
 
-        # UI без шумных сигналов, там где надо
         self.gif_dither.setChecked(d["gif_dither"])
         self.gif_auto_threads.setChecked(d["gif_auto_threads"])
         self.gif_threads.setValue(d["gif_threads"])
@@ -620,7 +605,6 @@ class ConversionsPanel(QWidget):
         self._save_int_ini("png_threads", d["png_threads"])
         self._save_int_ini("png_compress", d["png_compress"])
 
-        # применить зависимость доступности полей
         self._apply_gif_threads_state()
         self._apply_psd_threads_state()
 
@@ -1067,6 +1051,5 @@ class ConversionsPanel(QWidget):
             f"PSD→PNG: успешно {ok}/{total}, пропущено {skipped}"
         )
         if errors:
-            # Покажем первые несколько ошибок, чтобы не заспамить
             err_text = "\n".join(list(dict.fromkeys(errors))[:5])
             QMessageBox.warning(self, "PSD→PNG", f"Некоторые файлы не сконвертированы:\n{err_text}")

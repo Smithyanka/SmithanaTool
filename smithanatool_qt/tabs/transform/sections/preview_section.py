@@ -1,10 +1,10 @@
 
 from __future__ import annotations
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QSpinBox, QPushButton, QCheckBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QSpinBox, QPushButton, QCheckBox, QComboBox
 from PySide6.QtCore import Qt, Signal, QRect, QPoint
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient, QPolygon
 
-from smithanatool_qt.settings_bind import group, bind_checkbox
+from smithanatool_qt.settings_bind import group, bind_checkbox, get_value, set_value
 
 class LevelsWidget(QWidget):
     changed = Signal(int, float, int)  # black, gamma, white
@@ -165,6 +165,78 @@ class PreviewSection(QWidget):
         row_mode.addWidget(self.chk_edit_mode)
         row_mode.addStretch(1)
         v.addLayout(row_mode)
+
+        # ── Комбобокс: расположение кнопок масштаба
+        row_zoomui = QHBoxLayout();
+        row_zoomui.setSpacing(8)
+        lbl_zoomui = QLabel("Кнопки масштаба:")
+        cmb_zoomui = QComboBox()
+        cmb_zoomui.addItems([
+            "Классический",  # index 0
+            "Компактный"  # index 1
+        ])
+        row_zoomui.addWidget(lbl_zoomui)
+        row_zoomui.addWidget(cmb_zoomui)
+        row_zoomui.addStretch(1)
+        v.addLayout(row_zoomui)
+
+        bind_checkbox(self.chk_edit_mode, "PreviewSection/edit_mode", True)
+
+        def _bind_combo_index(combo: QComboBox, key: str, default: int, on_apply=None):
+            # Подтягивание из ini
+            try:
+                with group("PreviewSection"):
+                    val = int(get_value(key, default))
+            except Exception:
+                val = default
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0 if val not in (0, 1) else val)
+            combo.blockSignals(False)
+            if callable(on_apply):
+                try:
+                    on_apply(combo.currentIndex())
+                except Exception:
+                    pass
+
+            # Сохранение в ini + применение при изменении
+            def _save(idx: int):
+                try:
+                    with group("PreviewSection"):
+                        set_value(key, int(idx))
+                except Exception:
+                    pass
+                if callable(on_apply):
+                    try:
+                        on_apply(int(idx))
+                    except Exception:
+                        pass
+
+            combo.currentIndexChanged.connect(_save)
+
+        # применяем «как у чекбокса»: ini → UI → превью
+        _bind_combo_index(
+            cmb_zoomui,
+            "zoom_ui_mode",
+            0,
+            on_apply=lambda idx: (
+                self._preview.set_zoom_ui_mode(int(idx))
+                if (self._preview is not None and hasattr(self._preview, "set_zoom_ui_mode"))
+                else None
+            )
+        )
+
+        def _apply_edit_mode(on: bool):
+            try:
+                if self._preview is not None and hasattr(self._preview, "set_cut_paste_mode_enabled"):
+                    self._preview.set_cut_paste_mode_enabled(bool(on))
+            except Exception:
+                pass
+
+        self.chk_edit_mode.toggled.connect(_apply_edit_mode)
+        _apply_edit_mode(self.chk_edit_mode.isChecked())
+
+
+
         v.addSpacing(12)
         bind_checkbox(self.chk_edit_mode, "PreviewSection/edit_mode", True)
 

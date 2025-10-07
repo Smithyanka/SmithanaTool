@@ -87,7 +87,7 @@ class _PanZoomLabel(QLabel):
         if e.button() in (Qt.LeftButton, Qt.MiddleButton):
             # при первом драге отключаем fit для нормального панорамирования
             if self._owner._fit_to_window:
-                self._owner._set_fit(False)
+                self._owner._set_fit(True)
 
             self._panning = True
             self.setCursor(Qt.ClosedHandCursor)
@@ -109,6 +109,11 @@ class _PanZoomLabel(QLabel):
                     # В режиме нарезки правый клик вне границы — ничего не делаем
                     e.accept();
                     return
+            r = self._pixmap_rect_on_label()
+            if not r.contains(e.position().toPoint()):
+                self._owner._clear_selection()
+                e.accept()
+                return
             # Обычный режим одиночного выделения
             if self._owner._press_selection(e.position().toPoint()):
                 e.accept()
@@ -116,7 +121,31 @@ class _PanZoomLabel(QLabel):
                 super().mousePressEvent(e)
         else:
             super().mousePressEvent(e)
+    def _pixmap_rect_on_label(self) -> QRect:
+        pm = self.pixmap()
+        if not pm or pm.isNull():
+            return QRect()
 
+        w, h = pm.width(), pm.height()
+        a = self.alignment()
+
+        # Горизонтальное выравнивание
+        if a & Qt.AlignRight:
+            x0 = self.width() - w
+        elif a & Qt.AlignHCenter:
+            x0 = (self.width() - w) // 2
+        else:  # AlignLeft или по умолчанию
+            x0 = 0
+
+        # Вертикальное выравнивание
+        if a & Qt.AlignBottom:
+            y0 = self.height() - h
+        elif a & Qt.AlignVCenter:
+            y0 = (self.height() - h) // 2
+        else:  # AlignTop или по умолчанию
+            y0 = 0
+
+        return QRect(int(x0), int(y0), int(w), int(h))
     def mouseMoveEvent(self, e):
         if self._panning and self._scroll:
             hbar = self._scroll.horizontalScrollBar()
@@ -382,6 +411,68 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self.label.attach_scroll(self.scroll)
         self.scroll.setWidget(self.label)
 
+        self._zoom_ui_mode = 0
+
+        # ── Оверлейные элементы (живут на viewport ScrollArea)
+        self._overlay_zoom_out = QToolButton(self.scroll.viewport())
+        self._overlay_zoom_out.setText("−")
+        self._overlay_zoom_out.setAutoRaise(True)
+        self._overlay_zoom_out.setFixedSize(28, 28)
+        self._overlay_zoom_out.setToolTip("Уменьшить масштаб")
+
+        self._overlay_zoom_in = QToolButton(self.scroll.viewport())
+        self._overlay_zoom_in.setText("+")
+        self._overlay_zoom_in.setAutoRaise(True)
+        self._overlay_zoom_in.setFixedSize(28, 28)
+        self._overlay_zoom_in.setToolTip("Увеличить масштаб")
+
+        for b in (self._overlay_zoom_in, self._overlay_zoom_out):
+            b.setProperty("overlay", True)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setAttribute(Qt.WA_Hover, True)
+
+
+            b.setStyleSheet(
+                "QToolButton {"
+                "  background-color: rgba(31,31,31,180);" 
+            "  border: none;"
+            "  padding: 2px;"
+            "  min-width: 25px; min-height: 25px;"
+            "  border-radius: 6px;"
+            "  color: white;"
+            "}"
+            "QToolButton:hover {"
+            "  background-color: rgba(31,31,31,240);" 
+            "}"
+            "QToolButton:pressed {"
+            "  background-color: rgba(31,31,31,85);" 
+            "}"
+            "QToolButton:!enabled {"
+            "  background-color: rgba(31,31,31,100);"
+            "  color: rgba(255,255,255,120);"
+            "}"
+            )
+
+
+            self._overlay_zoom_out.hide()
+        self._overlay_zoom_in.hide()
+        self._overlay_zoom_out.clicked.connect(lambda: self._zoom_by(1 / 1.1))
+        self._overlay_zoom_in.clicked.connect(lambda: self._zoom_by(1.1))
+
+        self._overlay_info = QLabel(self.scroll.viewport())
+        self._overlay_info.setObjectName("overlay_info")
+        self._overlay_info.setStyleSheet(
+            "#overlay_info {"
+            " background-color: rgba(31,31,31,180); color: white;" 
+            " padding: 2px 6px; border-radius: 6px; font-size: 12px;"
+            "}"
+        )
+        self._overlay_info.hide()
+        self._overlay_info.setWordWrap(False)
+        self._overlay_info.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        self._controls_row_widgets = []
+
         self.scroll.viewport().setStyleSheet(f"background: {BG_BASE.name()};")
         self.scroll.setStyleSheet(f"QScrollArea{{ border-left: 1px solid {BORDER_DIM.name()}; }}")
 
@@ -390,7 +481,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self._toast.setObjectName("preview_toast")
         self._toast.setStyleSheet(
             "#preview_toast {"
-            " background: rgba(0,0,0,160); color: white;"
+            " background-color: rgba(31,31,31,180); color: white;" 
             " padding: 4px 10px; border-radius: 8px;"
             " font-size: 12px;"
             "}"
@@ -402,6 +493,8 @@ class PreviewPanel(SliceModeMixin, QWidget):
 
         # чтобы позиционировать тост при ресайзе viewport
         self.scroll.viewport().installEventFilter(self)
+        QTimer.singleShot(0, self._position_overlay_controls)
+        QTimer.singleShot(0, self._position_toast)
 
         h = QHBoxLayout()
         h.setContentsMargins(0, 0, 0, 0)  # 10px отступ слева
@@ -416,6 +509,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         # слева — "Разрешение ..."
         self.lbl_info = QLabel("—")
         self.lbl_info.setStyleSheet("color: #454545;")
+
         controls.addWidget(self.lbl_info)
 
         # разделяем левую и правую части
@@ -439,6 +533,11 @@ class PreviewPanel(SliceModeMixin, QWidget):
         controls.addWidget(self.btn_zoom_reset)
         controls.addWidget(self.btn_fit)
 
+        self._controls_row_widgets = [
+            self.lbl_info, self.lbl_zoom,
+            self.btn_zoom_out, self.btn_zoom_in,
+            self.btn_zoom_reset, self.btn_fit
+        ]
 
 
         v.addLayout(controls)
@@ -467,6 +566,54 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self._update_zoom_controls_enabled()
         self._update_actions_enabled()
         self._update_info_label()
+
+        # применяем режим при старте
+        self._apply_zoom_ui_mode(getattr(self, "_zoom_ui_mode", 0))
+        self._position_overlay_controls()
+
+
+    def set_zoom_ui_mode(self, mode: int):
+        self._apply_zoom_ui_mode(mode)
+
+    def _apply_zoom_ui_mode(self, mode: int):
+        self._zoom_ui_mode = 0 if mode not in (0, 1) else int(mode)
+        is_overlay = (self._zoom_ui_mode == 1)
+
+        for w in getattr(self, "_controls_row_widgets", []):
+            w.setVisible(not is_overlay)
+
+        if hasattr(self, "_overlay_zoom_in"):
+            self._overlay_zoom_in.setVisible(is_overlay)
+        if hasattr(self, "_overlay_zoom_out"):
+            self._overlay_zoom_out.setVisible(is_overlay)
+        if hasattr(self, "_overlay_info"):
+            self._overlay_info.setVisible(is_overlay)
+            if is_overlay:
+                try:
+                    self._overlay_info.adjustSize()
+                except Exception:
+                    pass
+
+        self._position_overlay_controls()
+        self._update_info_label()
+
+    def _position_overlay_controls(self):
+        vp = self.scroll.viewport()
+        if not vp:
+            return
+        margin = 8
+
+        if hasattr(self, "_overlay_zoom_in") and self._overlay_zoom_in.isVisible():
+            h_in = self._overlay_zoom_in.height() or self._overlay_zoom_in.sizeHint().height() or 28
+            h_out = self._overlay_zoom_out.height() or self._overlay_zoom_out.sizeHint().height() or 28
+            total_h = h_in + 6 + h_out
+            y0 = max(0, (vp.height() - total_h) // 2)
+            self._overlay_zoom_in.move(margin, y0)
+            self._overlay_zoom_out.move(margin, y0 + h_in + 6)
+
+        if hasattr(self, "_overlay_info") and self._overlay_info.isVisible():
+            self._overlay_info.adjustSize()
+            self._overlay_info.move(margin, margin)
 
     def set_cut_paste_mode_enabled(self, on: bool) -> None:
         """Показ/скрытие кнопок вырезки/вставки/undo/redo/сохранения в панели превью."""
@@ -671,14 +818,42 @@ class PreviewPanel(SliceModeMixin, QWidget):
             y = margin
         self._toast.move(x, y)
 
+    def _pixmap_rect_on_viewport(self) -> QRect:
+        """Прямоугольник pixmap в координатах viewport ScrollArea."""
+        r = self.label._pixmap_rect_on_label()
+        if r.isNull():
+            return QRect()
+        r.translate(self.label.pos())  # перенос в систему координат viewport
+        return r
+
     def eventFilter(self, obj, event):
-        # репозиция при ресайзе viewport
-        if obj is self.scroll.viewport() and event.type() == QEvent.Resize:
-            try:
-                self._position_toast()
-            except Exception:
-                pass
+        if obj is self.scroll.viewport():
+            if event.type() == QEvent.Resize:
+                try:
+                    self._position_toast()
+                    self._position_overlay_controls()
+                except Exception:
+                    pass
+                return False
+            if event.type() == QEvent.MouseButtonPress:
+                try:
+                    if (event.button() == Qt.RightButton
+                            and not self._slice_enabled
+                            and self._has_selection()):
+                        if not self._pixmap_rect_on_viewport().contains(event.position().toPoint()):
+                            self._clear_selection()
+                            return True
+                except Exception:
+                    pass
         return super().eventFilter(obj, event)
+
+    def _format_bytes(self, size: int) -> str:
+        num = float(size)
+        units = ["Б", "КБ", "МБ", "ГБ", "ТБ"]
+        for u in units:
+            if num < 1024 or u == units[-1]:
+                return f"{int(num)} {u}" if u == "Б" else f"{num:.2f} {u}".rstrip("0").rstrip(".")
+            num /= 1024
 
     def _is_memory_path(self, path: Optional[str]) -> bool:
         return bool(path and str(path).startswith("mem://"))
@@ -1040,6 +1215,10 @@ class PreviewPanel(SliceModeMixin, QWidget):
             self._position_toast()
         except Exception:
             pass
+        try:
+            self._position_overlay_controls()
+        except Exception:
+            pass
 
     # ---------- Зум/Fit ----------
     def _set_fit(self, fit: bool, *, update: bool = True):
@@ -1114,17 +1293,45 @@ class PreviewPanel(SliceModeMixin, QWidget):
         self.lbl_zoom.setText(f"{int(round(z * 100))}%")
 
     def _update_info_label(self):
-        """Только исходный размер + высота выделения (без 'на экране')."""
+        """Только исходный размер + высота выделения (px)."""
         if not (self._current_path and self._current_path in self._images):
             self.lbl_info.setText("—")
+            if hasattr(self, "_overlay_info"):
+                self._overlay_info.setText("—")
+                try:
+                    self._overlay_info.adjustSize()
+                    self._position_overlay_controls()
+                    self._overlay_info.raise_()
+                except Exception:
+                    pass
             return
+
         img = self._images[self._current_path]
         ow, oh = img.width(), img.height()
         sel_txt = ""
         if self._has_selection():
             sel_px = max(0, int(math.ceil(self._sel_y2) - math.floor(self._sel_y1)))
             sel_txt = f" • Выделение: {sel_px}px"
-        self.lbl_info.setText(f"Разрешение: {ow}×{oh}px{sel_txt}")
+
+        size_head = ""
+        try:
+            if self._current_path and not self._is_memory_path(self._current_path):
+                from pathlib import Path
+                b = Path(self._current_path).stat().st_size
+                size_head = f"{self._format_bytes(b)} • "
+        except Exception:
+            pass
+
+        text = f"{size_head}{ow}×{oh}px{sel_txt}"
+        self.lbl_info.setText(text)
+        if getattr(self, "_zoom_ui_mode", 0) == 1 and hasattr(self, "_overlay_info"):
+            self._overlay_info.setText(text)
+            try:
+                self._overlay_info.adjustSize()
+                self._position_overlay_controls()
+                self._overlay_info.raise_()
+            except Exception:
+                pass
 
     def _apply_levels_to_qimage(self, qimg: QImage) -> QImage:
         """Возвращает новую QImage с применёнными уровнями (к RGB-каналам).

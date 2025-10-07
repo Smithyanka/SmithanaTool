@@ -6,8 +6,9 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QFrame, QLabel, QPushButton,
     QGroupBox, QSizePolicy, QScrollArea, QSpacerItem
 )
+from smithanatool_qt.graphic.foundation.assets import asset_path
 
-BANNER_PATH = r"smithanatool_qt/assets/chill.png"
+BANNER_NAME = "chill.png"
 
 
 class BannerLabel(QLabel):
@@ -105,10 +106,6 @@ class AboutCard(QFrame):
 
 
 class InfoTab(QWidget):
-    """
-    Слева: большой баннер + карточка 'о приложении'.
-    Справа: два блока с кнопками-ссылками.
-    """
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -124,7 +121,7 @@ class InfoTab(QWidget):
         left_col.addStretch(1)
 
         self.banner = BannerLabel(self)
-        self.banner.set_source(BANNER_PATH)  # ← картинка берётся отсюда
+        self.banner.set_source(asset_path(BANNER_NAME))
         left_col.addWidget(self.banner, 1)
 
         self.about = AboutCard(
