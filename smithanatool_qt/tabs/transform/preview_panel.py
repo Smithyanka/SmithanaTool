@@ -434,7 +434,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
 
             b.setStyleSheet(
                 "QToolButton {"
-                "  background-color: rgba(31,31,31,180);" 
+                "  background-color: rgba(31,31,31,180);"  #БАЗА
             "  border: none;"
             "  padding: 2px;"
             "  min-width: 25px; min-height: 25px;"
@@ -442,10 +442,10 @@ class PreviewPanel(SliceModeMixin, QWidget):
             "  color: white;"
             "}"
             "QToolButton:hover {"
-            "  background-color: rgba(31,31,31,240);" 
+            "  background-color: rgba(69,69,69,150);" #при наведении
             "}"
             "QToolButton:pressed {"
-            "  background-color: rgba(31,31,31,85);" 
+            "  background-color: rgba(69,69,69,85);" #при нажатии
             "}"
             "QToolButton:!enabled {"
             "  background-color: rgba(31,31,31,100);"
