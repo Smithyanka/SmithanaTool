@@ -210,7 +210,11 @@ class CutSection(QWidget):
             self.spin_height.blockSignals(False)
 
         # Обновить видимость «Количество/Высота»
-        self._on_mode_changed(self.combo_mode.currentIndex())
+        show_count = (by == "count")
+        self.lbl_count.setVisible(show_count)
+        self.spin_slices.setVisible(show_count)
+        self.lbl_height.setVisible(not show_count)
+        self.spin_height.setVisible(not show_count)
 
     def _selected_paths(self) -> list[str]:
         if callable(getattr(self, "_paths_provider", None)):

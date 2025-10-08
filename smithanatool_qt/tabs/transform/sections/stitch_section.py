@@ -330,10 +330,10 @@ class StitchSection(QWidget):
 
     def _update_dim_label(self):
         if self.cmb_dir.currentText() == "По вертикали":
-            self.lbl_dim.setText("Ширина:")
+            self.lbl_dim.setText("Ширина (px):")
             self.chk_no_resize.setText("Не изменять ширину")
         else:
-            self.lbl_dim.setText("Высота:")
+            self.lbl_dim.setText("Высота (px):")
             self.chk_no_resize.setText("Не изменять высоту")
 
     def _apply_dim_state(self):
