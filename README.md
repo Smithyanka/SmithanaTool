@@ -14,6 +14,8 @@
 
 А также сохранение всех ваших настроек и путей!
 
+### [Подписаться на телеграм канал](https://t.me/smithanatool)
+
 <h3>Вкладка "Преобразования":<br>
 <img width="1751" height="999" alt="image" src="https://github.com/user-attachments/assets/0393c0a3-025c-4fc5-bc46-3663ddf3e967" />
 
