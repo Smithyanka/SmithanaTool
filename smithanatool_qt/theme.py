@@ -280,6 +280,26 @@ def apply_dark_theme(app):
         }}
         
         
+        /* GroupBox */
+        QGroupBox {{
+            background: transparent;             
+            border: 1px solid {SECTION_BG.name()};          
+            border-radius: 4px;
+            margin-top: 9px;                       
+            padding: 10px;                    
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;               
+            subcontrol-position: top left;           
+            left: 10px;                            
+            padding: 0 6px;                           
+            background-color: palette(window);        
+            color: #E5E7EB;                          
+            font-weight: 600;
+        }}
+        QGroupBox::title:disabled {{ color: #404040; }}
+        
+        
 """)
 
     app.setStyle(app.style().objectName())

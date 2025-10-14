@@ -4,7 +4,7 @@ import os, sys, subprocess
 from typing import List
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QSpinBox, QCheckBox,
-    QPushButton, QGroupBox, QFileDialog, QMessageBox, QProgressDialog, QApplication, QLineEdit
+    QPushButton, QGroupBox, QFileDialog, QMessageBox, QProgressDialog, QApplication, QLineEdit, QStackedLayout
 )
 from PySide6.QtCore import Qt, QTimer
 from ..stitcher import load_images, merge_vertical, merge_horizontal, save_png
@@ -18,6 +18,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from smithanatool_qt.tabs.common.bind import apply_bindings
 from smithanatool_qt.tabs.common.defaults import DEFAULTS
+
+from PySide6.QtGui import QImageReader
+try:
+    from ..preview_panel import memory_image_for
+except Exception:
+    memory_image_for = None
 
 
 def _open_in_explorer(path: str):
@@ -42,13 +48,13 @@ class StitchSection(QWidget):
 
         v = QVBoxLayout(self); v.setAlignment(Qt.AlignTop)
 
-        self._save_dir_le = QLineEdit(self);
+        self._save_dir_le = QLineEdit(self)
         self._save_dir_le.setVisible(False)  # stitch_out_dir
-        self._save_file_dir_le = QLineEdit(self);
+        self._save_file_dir_le = QLineEdit(self)
         self._save_file_dir_le.setVisible(False)  # stitch_save_dir
-        self._pick_dir_le = QLineEdit(self);
+        self._pick_dir_le = QLineEdit(self)
         self._pick_dir_le.setVisible(False)  # stitch_pick_dir
-        self._auto_pick_dir_le = QLineEdit(self);
+        self._auto_pick_dir_le = QLineEdit(self)
         self._auto_pick_dir_le.setVisible(False)  # stitch_auto_pick_dir
 
         # Направление
@@ -110,14 +116,44 @@ class StitchSection(QWidget):
         # Склейка по несколько
         grp_auto = QGroupBox("По несколько")
         av = QVBoxLayout(grp_auto)
-        row_a1 = QHBoxLayout()
-        row_a1.addWidget(QLabel("По сколько клеить:"))
-        self.spin_group = QSpinBox(); self.spin_group.setRange(2, 999); self.spin_group.setValue(12)
-        row_a1.addWidget(self.spin_group); row_a1.addSpacing(16)
-        row_a1.addWidget(QLabel("Нули:"))
-        self.spin_zeros = QSpinBox(); self.spin_zeros.setRange(1, 6); self.spin_zeros.setValue(2)
-        row_a1.addWidget(self.spin_zeros); row_a1.addStretch(1)
-        av.addLayout(row_a1)
+
+        # ── Режим автосклейки (как в cut_section)
+        row_a_mode = QHBoxLayout()
+        row_a_mode.addWidget(QLabel("Режим:"))
+        self.combo_auto_mode = QComboBox()
+        self.combo_auto_mode.addItems(["По количеству фрагментов", "По высоте"])
+        row_a_mode.addWidget(self.combo_auto_mode)
+        row_a_mode.addStretch(1)
+        av.addLayout(row_a_mode)
+
+        # ── Общий ряд параметров (без стека) + "Нули"
+        row_params = QHBoxLayout()
+
+        self.lbl_group = QLabel("По сколько клеить:")
+        self.spin_group = QSpinBox();
+        self.spin_group.setRange(2, 999);
+        self.spin_group.setValue(12)
+
+        self.lbl_max_h = QLabel("Макс. высота (px):")
+        self.spin_max_h = QSpinBox();
+        self.spin_max_h.setRange(100, 100000)
+        self.spin_max_h.setSingleStep(50);
+        self.spin_max_h.setValue(10000);
+        self.spin_max_h.setMinimumWidth(60)
+
+        row_params.addWidget(self.lbl_group)
+        row_params.addWidget(self.spin_group)
+        row_params.addWidget(self.lbl_max_h)
+        row_params.addWidget(self.spin_max_h)
+
+        row_params.addSpacing(16)
+        row_params.addWidget(QLabel("Нули:"))
+        self.spin_zeros = QSpinBox();
+        self.spin_zeros.setRange(1, 6);
+        self.spin_zeros.setValue(2)
+        row_params.addWidget(self.spin_zeros)
+        row_params.addStretch(1)
+        av.addLayout(row_params)
 
         # ----- Потоки
         row_a_threads = QHBoxLayout()
@@ -162,6 +198,7 @@ class StitchSection(QWidget):
         self.btn_one_pick.clicked.connect(self._do_stitch_one_pick)
         self.btn_auto.clicked.connect(self._do_stitch_auto)
         self.btn_auto_pick.clicked.connect(self._do_stitch_auto_pick)
+        self.combo_auto_mode.currentIndexChanged.connect(self._on_auto_mode_changed)
         self._apply_dim_state()
         QTimer.singleShot(0, self._apply_settings_from_ini)
 
@@ -172,8 +209,79 @@ class StitchSection(QWidget):
         self.chk_strip.toggled.connect(lambda v: self._save_bool_ini("strip_metadata", v))
         self.spin_group.valueChanged.connect(lambda v: self._save_int_ini("per", v))
         self.spin_zeros.valueChanged.connect(lambda v: self._save_int_ini("zeros", v))
+        self.spin_max_h.valueChanged.connect(lambda v: self._save_int_ini("group_max_height", v))
 
         # управление доступностью поля "Потоки" от чекбокса "Авто потоки"
+
+    def _img_wh(self, path: str) -> tuple[int, int]:
+        # mem:// из буфера
+        if isinstance(path, str) and path.startswith("mem://") and callable(memory_image_for):
+            try:
+                img = memory_image_for(path)
+                if img is not None and not img.isNull():
+                    return int(img.width()), int(img.height())
+            except Exception:
+                pass
+        # обычный файл
+        try:
+            r = QImageReader(path)
+            sz = r.size()
+            if sz.isValid():
+                return int(sz.width()), int(sz.height())
+        except Exception:
+            pass
+        return (0, 0)
+
+    def _scaled_h(self, wh: tuple[int, int], direction: str, target_dim: int | None) -> int:
+        w, h = wh
+        if w <= 0 or h <= 0:
+            return 0
+        if direction == "По вертикали":
+            # при вертикали выравниваем по ширине
+            if target_dim is None:
+                return h
+            # масштабирование по ширине с сохранением пропорций
+            return max(1, int(round(h * (float(target_dim) / max(1, float(w))))))
+        else:
+            # при горизонтали конечная высота — либо target_height, либо max(h)
+            return int(target_dim) if target_dim else h
+
+    def _split_chunks_by_max_height(self, paths: list[str], direction: str,
+                                    target_dim: int | None, max_h: int) -> list[list[str]]:
+        chunks: list[list[str]] = []
+        cur: list[str] = []
+        cur_metric = 0  # сумма (вертикаль) или max (горизонталь)
+
+        for p in paths:
+            hh = self._scaled_h(self._img_wh(p), direction, target_dim)
+            if direction == "По вертикали":
+                new_metric = cur_metric + hh
+            else:
+                new_metric = max(cur_metric, hh)
+
+            if cur and new_metric > max_h:
+                chunks.append(cur)
+                cur = [p]
+                cur_metric = hh if direction == "По вертикали" else hh
+            else:
+                cur.append(p)
+                cur_metric = new_metric
+
+        if cur:
+            chunks.append(cur)
+        return chunks
+
+    def _on_auto_mode_changed(self, idx: int):
+        by = "count" if int(idx) == 0 else "height"
+        show_count = (by == "count")
+
+        # показываем нужную пару слева
+        self.lbl_group.setVisible(show_count)
+        self.spin_group.setVisible(show_count)
+        self.lbl_max_h.setVisible(not show_count)
+        self.spin_max_h.setVisible(not show_count)
+
+        self._save_str_ini("group_by", by)
 
     def _apply_threads_state(self, checked: bool | None = None):
         if checked is None:
@@ -237,6 +345,8 @@ class StitchSection(QWidget):
             strip_metadata=True,
             per=12,
             zeros=2,
+            group_by="count",
+            group_max_height=10000,
             auto_threads=True,
             threads=max(2, (os.cpu_count() or 4) // 2),
         )
@@ -264,6 +374,11 @@ class StitchSection(QWidget):
         if hasattr(self, "spin_threads"):
             self.spin_threads.setValue(min(32, defaults["threads"]))
 
+        if hasattr(self, "spin_max_h"):
+            self.spin_max_h.setValue(defaults["group_max_height"])
+        if hasattr(self, "combo_auto_mode"):
+            self.combo_auto_mode.setCurrentIndex(0 if defaults["group_by"] == "count" else 1)
+
         # применить доступность "Потоки"
         on = not self.chk_auto_threads.isChecked()
         self.spin_threads.setEnabled(on)
@@ -286,6 +401,9 @@ class StitchSection(QWidget):
         self._save_int_ini("zeros", defaults["zeros"])
         self._save_bool_ini("auto_threads", defaults["auto_threads"])
         self._save_int_ini("threads", min(32, defaults["threads"]))
+        self._save_str_ini("group_by", defaults["group_by"])
+        self._save_int_ini("group_max_height", defaults["group_max_height"])
+
 
         self._apply_threads_state()
 
@@ -298,7 +416,7 @@ class StitchSection(QWidget):
             (self.spin_compress, "compress_level", 6),
             (self.chk_strip, "strip_metadata", True),
             (self.spin_group, "per", 12),
-            (self.spin_zeros, "zeros", 2),
+            (self.spin_max_h, "group_max_height", 10000),
 
             # потоки — единые дефолты
             (self.chk_auto_threads, "auto_threads", DEFAULTS["auto_threads"]),
@@ -310,6 +428,11 @@ class StitchSection(QWidget):
             (self._pick_dir_le, "stitch_pick_dir", DEFAULTS["stitch_pick_dir"]),
             (self._auto_pick_dir_le, "stitch_auto_pick_dir", DEFAULTS["stitch_auto_pick_dir"]),
         ])
+        # восстановить режим (count/height)
+        gb = self._ini_load_str("group_by", "count")
+        self.combo_auto_mode.setCurrentIndex(0 if gb == "count" else 1)
+        self._on_auto_mode_changed(self.combo_auto_mode.currentIndex())
+
         self._apply_compress_state(self.chk_opt.isChecked())
         self._apply_dim_state()
 
@@ -398,11 +521,11 @@ class StitchSection(QWidget):
 
     def _stitch_and_save_single(self, paths: List[str], direct_out_path: str | None = None):
         dlg = QProgressDialog("Сохраняю…", None, 0, 0, self)
-        dlg.setWindowTitle("Сохранение");
+        dlg.setWindowTitle("Сохранение")
         dlg.setWindowModality(Qt.ApplicationModal)
-        dlg.setCancelButton(None);
-        dlg.setMinimumDuration(0);
-        dlg.setAutoClose(False);
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
         dlg.show()
         QApplication.processEvents()
 
@@ -418,7 +541,7 @@ class StitchSection(QWidget):
                 "PNG (*.png)"
             )
             if not out_path:
-                dlg.close();
+                dlg.close()
                 return None, None
             if not out_path.lower().endswith(".png"):
                 out_path += ".png"
@@ -503,18 +626,24 @@ class StitchSection(QWidget):
         zeros = int(self.spin_zeros.value())
         direction, dim_val, optimize, compress, strip = self._build_output_params()
 
-        # Разбиваем вход на чанки
-        chunks = [paths[i:i + group] for i in range(0, len(paths), group)]
+        # --- выбираем режим группировки
+        by = "count" if self.combo_auto_mode.currentIndex() == 0 else "height"
+        if by == "count":
+            chunks = [paths[i:i + group] for i in range(0, len(paths), group)]
+        else:
+            max_h = int(self.spin_max_h.value())
+            chunks = self._split_chunks_by_max_height(paths, direction, dim_val, max_h)
+
         total = len(chunks)
         if total == 0:
             return 0
 
         prog = QProgressDialog("Сохраняю…", None, 0, total, self)
-        prog.setWindowTitle("Сохранение");
+        prog.setWindowTitle("Сохранение")
         prog.setWindowModality(Qt.ApplicationModal)
-        prog.setCancelButton(None);
-        prog.setMinimumDuration(0);
-        prog.setAutoClose(False);
+        prog.setCancelButton(None)
+        prog.setMinimumDuration(0)
+        prog.setAutoClose(False)
         prog.show()
         QApplication.processEvents()
 
@@ -567,5 +696,6 @@ class StitchSection(QWidget):
     def _show_done_box(self, out_dir: str, message: str):
         box = QMessageBox(self); box.setWindowTitle("Готово"); box.setText(message)
         btn_open = box.addButton("Открыть папку", QMessageBox.ActionRole)
-        box.addButton(QMessageBox.Ok); box.exec()
+        box.addButton(QMessageBox.Ok)
+        box.exec()
         if box.clickedButton() is btn_open: _open_in_explorer(out_dir)

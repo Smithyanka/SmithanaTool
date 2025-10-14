@@ -116,7 +116,7 @@ class ParserManhwaTab(QWidget):
 
         # Save dir
         gl.addWidget(QLabel("Папка сохранения:"), row, 0, Qt.AlignLeft)
-        self.btn_pick_out = QPushButton("Выбрать папку…")
+        self.btn_pick_out = QPushButton("Выбрать…")
         self.lbl_out = ElidedLabel("— не выбрано —"); self.lbl_out.setStyleSheet("color:#a00")
         self.btn_pick_out.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.lbl_out.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -280,6 +280,11 @@ class ParserManhwaTab(QWidget):
         self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini("auto_threads", bool(v)))
         self.spin_threads.valueChanged.connect(lambda v: self._save_int_ini("threads", int(v)))
         self.spin_zeros.valueChanged.connect(lambda v: self._save_int_ini("zeros", int(v)))
+        self.chk_delete_cache.toggled.connect(lambda v: self._save_bool_ini("delete_cache", bool(v)))
+        self.spin_scroll_ms.valueChanged.connect(lambda v: self._save_int_ini("scroll_ms", int(v)))
+
+        self.spin_max_h.valueChanged.connect(lambda v: self._save_int_ini("group_max_height", int(v)))
+        self.combo_auto_mode.currentIndexChanged.connect(lambda idx: self._save_str_ini("group_by", "count" if int(idx) == 0 else "height"))
 
         self._out_dir = ""
         self._stitch_dir = ""
@@ -460,6 +465,11 @@ class ParserManhwaTab(QWidget):
         self._save_int_ini("scroll_ms", defaults["scroll_ms"])
         self._save_int_ini("zeros", defaults["zeros"])
 
+        self.combo_auto_mode.setCurrentIndex(0)
+        self.spin_max_h.setValue(10000)
+        self._save_str_ini("group_by", "count")
+        self._save_int_ini("group_max_height", 10000)
+
     def _save_bool_ini(self, key: str, value: bool):
         try:
             shadow_attr = f"__{key}__shadow"
@@ -560,6 +570,8 @@ class ParserManhwaTab(QWidget):
             self.chk_no_resize, self.spin_width, self.chk_same_dir, self.btn_pick_stitch,
             self.chk_delete, self.chk_opt, self.spin_comp, self.chk_strip, self.spin_per, self.spin_zeros,
             self.lbl_stitch_text, self.lbl_stitch_dir, self.grp_png, self.lbl_per, self.lbl_zeros, self.grp_dim,
+            self.lbl_mode, self.combo_auto_mode, self.lbl_max_h, self.spin_max_h,
+            self.combo_auto_mode, self.lbl_max_h, self.spin_max_h, self.grp_stitch_opts, self.grp_setup,
         ]:
             w.setEnabled(on)
         self._update_same_dir()
@@ -668,6 +680,10 @@ class ParserManhwaTab(QWidget):
             strip_metadata=self.chk_strip.isChecked(),
             per=int(self.spin_per.value()),
             zeros=int(self.spin_zeros.value()),
+
+            group_by=("count" if self.combo_auto_mode.currentIndex() == 0 else "height"),
+            group_max_height=int(self.spin_max_h.value()),
+
             auto_confirm_purchase=self.chk_auto_buy.isChecked(),
             auto_confirm_use_rental=self.chk_auto_use_ticket.isChecked(),
             auto_threads=self.chk_auto_threads.isChecked(),
@@ -813,6 +829,16 @@ class ParserManhwaTab(QWidget):
             bind_checkbox(self.chk_opt, "optimize_png", True)
             bind_checkbox(self.chk_strip, "strip_metadata", True)
             bind_spinbox(self.spin_zeros, "zeros", 2)
+
+            bind_spinbox(self.spin_max_h, "group_max_height", 10000)
+            bind_attr_string(self, "_group_by_shadow", "group_by", "count")
+            gb = getattr(self, "_group_by_shadow", "count")
+            self.combo_auto_mode.setCurrentIndex(0 if gb == "count" else 1)
+            show_count = (self.combo_auto_mode.currentIndex() == 0)
+            self.lbl_per.setVisible(show_count)
+            self.spin_per.setVisible(show_count)
+            self.lbl_max_h.setVisible(not show_count)
+            self.spin_max_h.setVisible(not show_count)
 
             self._refresh_stitch_dir_label()
 

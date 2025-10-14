@@ -1,7 +1,19 @@
 from __future__ import annotations
 import os, re
+from PySide6.QtGui import QImageReader
 
-SUPPORTED_EXT = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', ".psd", ".psb"}
+_DEFAULT_EXT = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.psd', '.psb'}
+
+def _runtime_supported_ext() -> set[str]:
+    """Расширения, которые реально умеет читать Qt на этой машине."""
+    try:
+        fmts = QImageReader.supportedImageFormats()  # [QByteArray, ...]
+        qt_exts = {"." + bytes(f).decode("ascii").lower() for f in fmts}
+        return qt_exts | _DEFAULT_EXT
+    except Exception:
+        return _DEFAULT_EXT
+
+SUPPORTED_EXT = _runtime_supported_ext()
 
 def natural_key(path: str):
     """Естественная сортировка по имени файла (учитывает числа)."""
@@ -16,7 +28,20 @@ def mtime_key(path: str) -> float:
         return 0.0
 
 def is_image(path: str) -> bool:
-    return os.path.splitext(path)[1].lower() in SUPPORTED_EXT and os.path.isfile(path)
+    if isinstance(path, str) and path.startswith("mem://"):
+        return True
+
+    if not os.path.isfile(path):
+        return False
+    try:
+        reader = QImageReader(path)
+        if reader.canRead():
+            return True
+    except Exception:
+        pass
+
+    ext = os.path.splitext(path)[1].lower()
+    return ext in SUPPORTED_EXT
 
 def dedup_keep_order(items):
     seen = set()

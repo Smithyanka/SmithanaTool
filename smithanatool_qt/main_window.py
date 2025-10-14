@@ -4,50 +4,44 @@ from PySide6.QtGui import QIcon, QCloseEvent
 
 import sys
 from pathlib import Path
+import time
 
-from smithanatool_qt.tabs.transform import TransformTab
-from smithanatool_qt.tabs.parser_manhwa_tab import ParserManhwaTab
-from smithanatool_qt.tabs.parser_novel_tab import ParserNovelTab
-from smithanatool_qt.tabs.info_tab import InfoTab
-from smithanatool_qt.tabs.transform.preview_panel import PreviewPanel
-from smithanatool_qt.settings_bind import restore_window_geometry, save_window_geometry
+import importlib
+
+
+from smithanatool_qt.settings_bind import restore_window_geometry, save_window_geometry, group, get_value, set_value, ini_path
 from smithanatool_qt.theme import apply_dark_theme, BORDER_DIM, BG_BASE
-from smithanatool_qt.tabs.transform.gallery.panel import GalleryPanel
 
-# Новые импорты из ваших модулей
+
 from .graphic.foundation.assets import asset_path
 from .graphic.foundation.frameless import install_frameless_resize
 from .graphic.ui.titlebar import TitleBar
 
-
-from smithanatool_qt.settings_bind import (
-    restore_window_geometry, save_window_geometry,
-    group, get_value, set_value, ini_path
-)
 
 _BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 
 
 class MainWindow(QMainWindow):
     TAB_SPECS = {
-        "transform":     ("_transform_tab",    "smithanatool_qt.tabs.transform",            "TransformTab",    "Преобразования"),
+        "transform":     ("_transform_tab",    "smithanatool_qt.tabs.transform.tab",            "TransformTab",    "Преобразования"),
         "parser_manhwa": ("_parser_manhwa_tab","smithanatool_qt.tabs.parser_manhwa_tab",    "ParserManhwaTab", "Парсер манхв Kakao"),
         "parser_novel":  ("_parser_novel_tab", "smithanatool_qt.tabs.parser_novel_tab",     "ParserNovelTab",  "Парсер новелл Kakao"),
         "info":          ("_info_tab",         "smithanatool_qt.tabs.info_tab",             "InfoTab",         "Инфо"),
     }
 
     def _has_unsaved_changes(self) -> bool:
-        for g in self.findChildren(GalleryPanel):
+        for w in self.findChildren(QWidget):
             try:
-                if g._has_unsaved():
-                    return True
+                # любой виджет, у которого есть _has_unsaved()
+                if hasattr(w, "_has_unsaved") and callable(w._has_unsaved):
+                    if w._has_unsaved():
+                        return True
             except Exception:
                 pass
         return False
 
-
     def _show_loading(self, text="Загрузка…"):
-        # накрываем именно панель вкладок
+        self._hide_loading()
         self._loading = _LoadingOverlay(self.tabs, text)
         self._loading.start(text)
 
@@ -105,7 +99,6 @@ class MainWindow(QMainWindow):
             g.moveCenter(ag.center());
             self.move(g.topLeft())
 
-        # сброс внутренних layout'ов вкладок — как было
         try:
             for tab in (
                     getattr(self, "_transform_tab", None),
@@ -124,7 +117,7 @@ class MainWindow(QMainWindow):
             return
         self._startup_realized = True
         idx = self.tabs.currentIndex()
-        if idx is None or idx < 0:
+        if idx < 0:
             return
         w = self.tabs.widget(idx)
         if w is None:
@@ -133,8 +126,16 @@ class MainWindow(QMainWindow):
         if isinstance(key, str):
             self._realize_tab(key)
 
+        if self.tabs.count() == 0:
+            return
+        idx = self.tabs.currentIndex()
+        if idx < 0:
+            return
+        self._ensure_tab_loaded(idx)
+
+
+
     def _add_lazy_tab(self, key: str, title: str):
-        from PySide6.QtWidgets import QWidget
         placeholder = QWidget()
         placeholder.setProperty("tab_key", key)
         placeholder.setProperty("realized", False)
@@ -143,7 +144,6 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(placeholder, title)
 
     def _realize_tab(self, key: str):
-        # 0) если уже реализована — ничего не делаем и loader не показываем
         try:
             attr, module_path, class_name, title = self.TAB_SPECS[key]
         except Exception:
@@ -160,22 +160,24 @@ class MainWindow(QMainWindow):
         def _do_realize():
             try:
                 # найти индекс заглушки
+                ph = getattr(self, attr, None)
                 idx = -1
                 for i in range(self.tabs.count()):
                     w = self.tabs.widget(i)
-                    if w is getattr(self, attr) or (w is not None and w.property("tab_key") == key):
-                        idx = i;
+                    if w is ph or (w is not None and w.property("tab_key") == key):
+                        idx = i
                         break
                 if idx == -1:
                     return
 
-                # показываем лоадер ТОЛЬКО когда реально начинаем сборку
-                self._show_loading(f"Открываю «{title}»…")
-
-                import importlib
+                t0 = time.perf_counter()
                 module = importlib.import_module(module_path)
                 cls = getattr(module, class_name)
                 inst = cls(self)
+                print(f"[startup] realized {key} in {time.perf_counter() - t0:.3f}s")
+
+                # показываем лоадер ТОЛЬКО когда реально начинаем сборку
+                self._show_loading(f"Открываю «{title}»…")
                 inst.setProperty("tab_key", key)
                 inst.setProperty("realized", True)
                 self._restore_persisted_child_states(inst)
@@ -247,8 +249,13 @@ class MainWindow(QMainWindow):
     def _apply_tabs_from_settings(self):
         self.tabs.blockSignals(True)
         try:
+            visible = 0
             for key in self.TAB_SPECS.keys():
-                self._ensure_tab_enabled(key, self._ini_bool("Tabs", key, True))
+                enabled = self._ini_bool("Tabs", key, True)
+                self._ensure_tab_enabled(key, enabled)
+                if enabled:
+                    visible += 1
+            # ← удалить страховку включения всех вкладок
             self._reorder_tabs_to_spec()
         finally:
             self.tabs.blockSignals(False)
@@ -322,7 +329,7 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         self._default_style_name = app.style().objectName()
         self._default_palette = app.style().standardPalette()
-        self._apply_theme()
+        QTimer.singleShot(0, self._apply_theme)
 
         # Меню "Вид" → "Вкладки"
         menu_view = self.menuBar().addMenu("Вид")
@@ -344,11 +351,11 @@ class MainWindow(QMainWindow):
         self._act_tab_novel     = add_tab_toggle("Парсер новелл",    "parser_novel",  enable_novel)
         self._act_tab_info      = add_tab_toggle("Инфо",             "info",          enable_info)
 
-        act_reset_zoom = menu_view.addAction("Сбросить масштаб окна")
+        act_reset_zoom = menu_view.addAction("Сбросить размер окна")
         act_reset_zoom.triggered.connect(self._reset_window_size)
 
         # Вынесенный TitleBar
-        self.titlebar = TitleBar(self, view_menu=menu_view, small_text="v1.0.5")
+        self.titlebar = TitleBar(self, view_menu=menu_view, small_text="v1.0.6")
         layout.insertWidget(0, self.titlebar)
         self.menuBar().setVisible(False)
 
@@ -442,9 +449,12 @@ class MainWindow(QMainWindow):
             pass
 
         try:
-            for p in self.findChildren(PreviewPanel):
-                if hasattr(p, "discard_changes"):
-                    p.discard_changes()
+            for w in self.findChildren(QWidget):
+                try:
+                    if hasattr(w, "discard_changes") and callable(w.discard_changes):
+                        w.discard_changes()
+                except Exception:
+                    pass
         except Exception:
             pass
         try:

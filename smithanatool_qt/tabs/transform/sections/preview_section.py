@@ -159,6 +159,15 @@ class PreviewSection(QWidget):
         self._preview = preview
 
         v = QVBoxLayout(self)
+
+        row_gallery_preview = QHBoxLayout();
+        row_gallery_preview.setSpacing(8)
+        self.chk_gallery_preview = QCheckBox("Миниатюры")
+        row_gallery_preview.addWidget(self.chk_gallery_preview)
+        row_gallery_preview.addStretch(1)
+        v.addLayout(row_gallery_preview)
+
+
         row_mode = QHBoxLayout();
         row_mode.setSpacing(8)
         self.chk_edit_mode = QCheckBox("Режим вырезки и вставки")
@@ -181,6 +190,18 @@ class PreviewSection(QWidget):
         v.addLayout(row_zoomui)
 
         bind_checkbox(self.chk_edit_mode, "PreviewSection/edit_mode", True)
+        bind_checkbox(self.chk_gallery_preview, "PreviewSection/gallery_previews", False)
+
+        def _apply_gallery_preview(on: bool):
+            try:
+                gp = getattr(self._preview, "gallery_panel", None)
+                if gp is not None and hasattr(gp, "set_show_thumbnails"):
+                    gp.set_show_thumbnails(bool(on))  # мгновенно применить
+            except Exception:
+                pass
+
+        self.chk_gallery_preview.toggled.connect(_apply_gallery_preview)
+        _apply_gallery_preview(self.chk_gallery_preview.isChecked())
 
         def _bind_combo_index(combo: QComboBox, key: str, default: int, on_apply=None):
             # Подтягивание из ini

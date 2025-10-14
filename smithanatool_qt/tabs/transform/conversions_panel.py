@@ -33,7 +33,6 @@ class CollapsibleSection(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet("""
             #collSection {
-                border: 1px solid palette(mid);
                 border-radius: 4px;
                 background: transparent;
             }
@@ -52,7 +51,7 @@ class CollapsibleSection(QWidget):
         self._btn.setFocusPolicy(Qt.NoFocus)  # без фокуса-рамки
         self._btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # кликабельна вся строка
         self._btn.setStyleSheet("""
-            QToolButton { background: transparent; border: none; padding: 4px 0; }
+            QToolButton { background: transparent; border: none; padding: 5px; }
             QToolButton:hover { background: transparent; }
             QToolButton:pressed { background: transparent; }
         """)

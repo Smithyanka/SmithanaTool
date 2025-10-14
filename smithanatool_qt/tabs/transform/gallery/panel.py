@@ -2,17 +2,23 @@ from __future__ import annotations
 from typing import List, Optional, Callable
 import os
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QAbstractItemView, QComboBox, QListWidgetItem, QMessageBox, QFrame
 )
-from PySide6.QtGui import QGuiApplication, QKeySequence, QAction
+from PySide6.QtGui import QGuiApplication, QKeySequence, QAction, QIcon, QPixmap, QImage
 
 from ..common import is_image, dedup_keep_order
 from .widgets import RightSelectableList
 from .settings_mixin import IniStringsMixin
 from . import io, sort, menu, list_ops
+
+from smithanatool_qt.settings_bind import group, get_value
+
+from ..preview_panel import memory_image_for, _qimage_from_pil
+from psd_tools import PSDImage
+from PIL import Image as PILImage
 
 
 class GalleryPanel(QWidget, IniStringsMixin):
@@ -57,15 +63,22 @@ class GalleryPanel(QWidget, IniStringsMixin):
         v.addSpacing(7)
 
         # ——— Список файлов ———
-        v.addWidget(QLabel("Файлы"))
+        self.lbl_files = QLabel("—")
+        v.addWidget(self.lbl_files)
         self.list = RightSelectableList()
         self.list.setFrameShape(QFrame.NoFrame)
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.list.itemSelectionChanged.connect(self._update_files_label)
         self.list.setDragEnabled(True)
         self.list.setAcceptDrops(True)
         self.list.setDragDropMode(QAbstractItemView.InternalMove)
         self.list.setDefaultDropAction(Qt.MoveAction)
         v.addWidget(self.list)
+
+        # --- миниатюры в списке ---
+        self._thumb_cache = {}
+        self._show_thumbs = self._read_show_thumbs()
+        self.list.setIconSize(QSize(72, 72) if self._show_thumbs else QSize(0, 0))
 
         # ——— Действия ———
         row_sel = QHBoxLayout()
@@ -121,7 +134,98 @@ class GalleryPanel(QWidget, IniStringsMixin):
         self._last_files_dir = self._ini_load_str("last_files_dir", os.path.expanduser("~"))
         self._last_folder_dir = self._ini_load_str("last_folder_dir", os.path.expanduser("~"))
 
+
+        # Обновление количества файлов
+        self.filesChanged.connect(self._update_files_label)
+        self._update_files_label()
+
+
+    # Миниатюры в галерее
+    def _read_show_thumbs(self) -> bool:
+        try:
+            with group("PreviewSection"):
+                val = get_value("gallery_previews", 0)
+            if isinstance(val, str):
+                val = val.strip().lower() in ("1", "true", "yes", "on")
+            else:
+                val = bool(int(val))
+            return bool(val)
+        except Exception:
+            return False
+
+    def set_show_thumbnails(self, on: bool):
+        """Применить немедленно (на случай прямого сигнала из PreviewSection)."""
+        self._show_thumbs = bool(on)
+        self.list.setIconSize(QSize(128, 128) if self._show_thumbs else QSize(0, 0))
+        self._thumb_cache.clear()
+        self._rebuild_list()
+
+    def _thumbnail_for(self, path: str) -> QIcon:
+        ic = self._thumb_cache.get(path)
+        if ic is not None:
+            return ic
+
+        pm: QPixmap | None = None
+        if isinstance(path, str) and path.startswith("mem://"):
+            try:
+                img = memory_image_for(path)
+                if img is not None and not img.isNull():
+                    pm = QPixmap.fromImage(img)
+            except Exception:
+                pm = None
+        else:
+            # PSD/PSB: собираем сводный слой через psd_tools → PIL → QImage → QPixmap
+            ext = os.path.splitext(path)[1].lower()
+            if ext in (".psd", ".psb"):
+                try:
+                    psd = psd = PSDImage.open(path)
+                    pil = psd.composite()  # PIL.Image
+
+                    # Оптимизация: уменьшаем до ~2× размера иконки списка, чтобы не держать гигантское изображение
+                    isz = self.list.iconSize()
+                    tw = max(64, (isz.width() if isz.width() > 0 else 72) * 2)
+                    th = max(64, (isz.height() if isz.height() > 0 else 72) * 2)
+                    try:
+                        # Pillow 9.1+: Image.Resampling.LANCZOS; для старых версий — fallback на Image.LANCZOS
+                        Resampling = getattr(PILImage, "Resampling", PILImage)
+                        pil.thumbnail((tw, th), Resampling.LANCZOS)
+                    except Exception:
+                        try:
+                            pil.thumbnail((tw, th), PILImage.LANCZOS)
+                        except Exception:
+                            pil.thumbnail((tw, th))
+
+                    qimg = _qimage_from_pil(pil) 
+                    pm = QPixmap.fromImage(qimg)
+                except Exception:
+                    pm = None
+            else:
+                pm = QPixmap(path)
+
+        if pm is None or pm.isNull():
+            ic = QIcon()
+        else:
+            size = self.list.iconSize()
+            if size.width() <= 0 or size.height() <= 0:
+                size = QSize(72, 72)
+            ic = QIcon(pm.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        self._thumb_cache[path] = ic
+        return ic
+
     # ---------- Публичные ----------
+    def _update_files_label(self, *args):
+        try:
+            total = len(self._files)
+            selected = len(self.list.selectedItems())
+            text = f"Всего файлов: {total}"
+            if selected:
+                text += f" • Выбрано: {selected}"
+            self.lbl_files.setText(text)
+        except Exception:
+            pass
+
+
     def set_forget_callback(self, fn: Callable[[list[str]], None]):
         self._forget_cb = fn
 
@@ -242,10 +346,15 @@ class GalleryPanel(QWidget, IniStringsMixin):
             star = " *" if self._is_dirty(p) else ""
             it = QListWidgetItem(f"{idx}. {os.path.basename(p)}{star}")
             it.setData(Qt.UserRole, p)
+            if self._show_thumbs:
+                it.setIcon(self._thumbnail_for(p))
+                # (необязательно, но помогает гарантировать высоту строки)
+                it.setSizeHint(QSize(0, max(26, self.list.iconSize().height() + 6)))
             self.list.addItem(it)
         self.list.blockSignals(False)
         if not self._files:
             self.currentPathChanged.emit(None)
+        self._update_files_label()
 
     def mark_dirty(self, path: str, dirty: bool):
         for i in range(self.list.count()):

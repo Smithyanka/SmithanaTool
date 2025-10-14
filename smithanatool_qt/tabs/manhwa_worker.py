@@ -35,6 +35,9 @@ class ParserConfig:
     strip_metadata: bool = True
     per: int = 12
     zeros: int = 2
+    group_by: str = "count"
+    group_max_height: int = 10000
+
     auto_confirm_purchase: bool = False
     auto_confirm_use_rental: bool = False
     auto_threads: bool = True
@@ -163,6 +166,10 @@ class ManhwaParserWorker(QObject):
             "auto_threads": bool(self.cfg.auto_threads),
             "threads": int(self.cfg.threads),
             "zeros": int(self.cfg.zeros),
+
+            "group_by": str(self.cfg.group_by),
+            "group_max_height": int(self.cfg.group_max_height),
+
         }
 
     def _is_browser_closed_logline(self, s: str) -> bool:

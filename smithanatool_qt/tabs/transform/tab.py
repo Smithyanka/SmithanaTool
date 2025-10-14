@@ -19,6 +19,7 @@ class TransformTab(QWidget):
         splitter = QSplitter(Qt.Horizontal, self)
         self.gallery = GalleryPanel()
         self.preview = PreviewPanel()
+        self.preview.gallery_panel = self.gallery
         self.sections = SectionsPanel(self.gallery, self.preview)
 
         self.gallery.set_unsaved_checker(self.preview.has_unsaved_changes)

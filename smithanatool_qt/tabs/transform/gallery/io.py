@@ -2,15 +2,18 @@ from __future__ import annotations
 import os
 from PySide6.QtWidgets import QFileDialog, QWidget
 from PySide6.QtGui import QClipboard
-from ..common import is_image
+from ..common import is_image, SUPPORTED_EXT
 
 # Диалоги выбора
 def pick_files(parent: QWidget, start_dir: str) -> list[str]:
+    patterns = " ".join(f"*{ext}" for ext in sorted(SUPPORTED_EXT))
+    name_filter = f"Изображения ({patterns});;Все файлы (*.*)"
+
     files, _ = QFileDialog.getOpenFileNames(
         parent,
         "Выберите файлы",
         start_dir,
-        "Изображения (*.png *.jpg *.jpeg *.gif *.bmp *.webp *.psd *.psb);;Все файлы (*.*)"
+        name_filter
     )
     return [f for f in files if is_image(f)]
 

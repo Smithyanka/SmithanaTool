@@ -36,6 +36,8 @@ def unregister_memory_images(paths: list[str]) -> None:
     for p in paths:
         _MEM_IMAGES.pop(p, None)
 
+def memory_image_for(key: str) -> QImage | None:
+    return _MEM_IMAGES.get(key)
 
 def clear_memory_registry() -> None:
     _MEM_IMAGES.clear()
@@ -826,9 +828,19 @@ class PreviewPanel(SliceModeMixin, QWidget):
         r.translate(self.label.pos())  # перенос в систему координат viewport
         return r
 
+    def showEvent(self, e):
+        super().showEvent(e)
+        QTimer.singleShot(0, self._position_overlay_controls)
+        QTimer.singleShot(0, self._position_toast)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        QTimer.singleShot(0, self._position_overlay_controls)
+        QTimer.singleShot(0, self._position_toast)
+
     def eventFilter(self, obj, event):
         if obj is self.scroll.viewport():
-            if event.type() == QEvent.Resize:
+            if event.type() in (QEvent.Show, QEvent.Resize):
                 try:
                     self._position_toast()
                     self._position_overlay_controls()
@@ -1311,7 +1323,7 @@ class PreviewPanel(SliceModeMixin, QWidget):
         sel_txt = ""
         if self._has_selection():
             sel_px = max(0, int(math.ceil(self._sel_y2) - math.floor(self._sel_y1)))
-            sel_txt = f" • Выделение: {sel_px}px"
+            sel_txt = f" • Выделено: {sel_px}px"
 
         size_head = ""
         try:

@@ -75,7 +75,42 @@ def _auto_stitch_chapter(chapter_dir: str, *, auto_cfg: dict, log=None, stop_fla
         if log: log("[WARN] Автосклейка: нет файлов для склейки.")
         return
 
-    groups = [files[i:i+per] for i in range(0, len(files), per)]
+    # читаем режим и параметры
+    group_by = str(auto_cfg.get("group_by") or "count").lower()
+    group_max_height = int(auto_cfg.get("group_max_height") or 10000)
+
+    def _plan_groups_by_count(files, per):
+        return [files[i:i + per] for i in range(0, len(files), per)]
+
+    def _plan_groups_by_height(files, max_h, target_w):
+        max_h = max(100, int(max_h))  # защита от глупых значений
+        groups = []
+        cur, cur_h = [], 0
+        for p in files:
+            try:
+                from PIL import Image
+                with Image.open(p) as im:
+                    w, h = im.size
+            except Exception:
+                w, h = 0, 0
+            if target_w and w and w != target_w:
+                h = round(h * (float(target_w) / float(w)))
+            if cur and (cur_h + h) > max_h:
+                groups.append(cur)
+                cur, cur_h = [p], h
+            else:
+                cur.append(p);
+                cur_h += h
+        if cur:
+            groups.append(cur)
+        return groups
+
+    groups = (
+        _plan_groups_by_height(files, group_max_height, target_width)
+        if group_by == "height" else
+        _plan_groups_by_count(files, per)
+    )
+
     def out_name(i: int) -> str:
         return f"{i:0{digits}d}.png"
 

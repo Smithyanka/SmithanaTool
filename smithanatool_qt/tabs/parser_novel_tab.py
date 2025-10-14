@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Slot, QTimer, QStandardPaths, QRegularExpression, QSignalBlocker
 from PySide6.QtGui import QIntValidator, QRegularExpressionValidator, QValidator
 
+from .novel_worker import NovelParserWorker, NovelParserConfig
+
 # === INI биндинги ===
 from smithanatool_qt.settings_bind import (
     group,
@@ -667,7 +669,6 @@ class ParserNovelTab(QWidget):
         if not self._out_dir:
             QMessageBox.warning(self, "Парсер", "Сначала выберите папку сохранения.")
             return
-        from .novel_worker import NovelParserWorker, NovelParserConfig
         cfg = self._collect_cfg()
         self._append_log("[DEBUG] Запуск парсера новелл Kakao.")
 
