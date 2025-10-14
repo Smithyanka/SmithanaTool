@@ -4,7 +4,7 @@
 
 Данный инструмент создан для упрощения сканлейтерских задач:
 
-- Просмотр файлов
+- Просмотр файлов, в том числе PSD
 - Вырезка и вставка фрагментов изображений в начало или конец с последующим сохранением
 - Склейка файлов в один или несколько PNG
 - Нарезка на фрагменты при помощи областей
@@ -15,16 +15,21 @@
 А также сохранение всех ваших настроек и путей!
 
 <h3>Вкладка "Преобразования":<br>
-<img width="1750" height="1037" alt="image" src="https://github.com/user-attachments/assets/7df8703e-9c05-42b3-bad4-b5250310849b" />
+<img width="1751" height="999" alt="image" src="https://github.com/user-attachments/assets/0393c0a3-025c-4fc5-bc46-3663ddf3e967" />
+
 Секции вклакди "Преобразования":<br>
-<img width="924" height="913" alt="image" src="https://github.com/user-attachments/assets/fe2d6c44-e34d-43a7-8942-64ce96473c0f" />
-<img width="897" height="849" alt="image" src="https://github.com/user-attachments/assets/a2e6e60a-6dcc-4507-92bd-01980389e716" />
-<img width="896" height="476" alt="image" src="https://github.com/user-attachments/assets/e29ba43d-e6e7-417d-8d5a-88ad14fcf960" />
+<img width="814" height="1028" alt="image" src="https://github.com/user-attachments/assets/7e08b6be-5ea5-4c7d-b257-94e9317c97ff" />
+<img width="796" height="1060" alt="image" src="https://github.com/user-attachments/assets/6a9386c2-6083-49d3-94de-070aee1d267d" />
+<img width="821" height="690" alt="image" src="https://github.com/user-attachments/assets/61fce17c-759b-4739-ac04-92953f554367" />
+
 
 Вкладка "Парсер манхв Kakao":<br>
-<img width="1746" height="1029" alt="image" src="https://github.com/user-attachments/assets/8192716f-1a78-46a6-ab59-e640c2940d60" />
+<img width="1748" height="1006" alt="image" src="https://github.com/user-attachments/assets/44a0e9ff-6be8-44b6-8277-62739fc33bd3" />
+
 Режим по UI:
-<img width="1072" height="792" alt="image" src="https://github.com/user-attachments/assets/386b66f8-a2da-419b-9cd0-64f34fb29963" />
+<img width="1076" height="790" alt="image" src="https://github.com/user-attachments/assets/aa756557-c79c-44b4-8f3c-ed7ed3c6eb54" />
+
 
 Вкладка "Парсер новелл Kakao":<br>
-<img width="1746" height="1043" alt="image" src="https://github.com/user-attachments/assets/e0353c1a-4060-4e1d-9814-407efc7571d8" />
+<img width="1736" height="1005" alt="image" src="https://github.com/user-attachments/assets/34b175d3-649b-41f8-ae56-11d934c4128b" />
+
