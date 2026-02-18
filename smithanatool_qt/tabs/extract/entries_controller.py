@@ -50,7 +50,7 @@ class _BusyOverlay(QWidget):
 
         # Стили
         self.setStyleSheet("""
-        QWidget#busyOverlay { background-color: rgba(0,0,0,200); }
+        QWidget#busyOverlay { background-color: rgba(0,0,0,190); }
 
         QWidget#busyOverlay QLabel {
           color: white;
