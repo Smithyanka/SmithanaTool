@@ -180,7 +180,7 @@ def build_extra_group(panel) -> QWidget:
 def build_action_buttons(panel, parent_layout: QVBoxLayout) -> None:
     row_buttons = QHBoxLayout()
     row_buttons.setSpacing(8)
-    panel.btn_extract = QPushButton("Извлечь текст")
+    panel.btn_extract = QPushButton("Распознать текст")
     panel.btn_handwriting = QPushButton("Рукописный ввод")
 
     row_buttons.addWidget(panel.btn_extract)

@@ -26,7 +26,7 @@ class MainWindow(QMainWindow):
                       "smithanatool_qt.tabs.transform.tab",
                       "TransformTab",
                       "Преобразования"),
-        "extract_text": ("_extract_tab", "smithanatool_qt.tabs.extract.tab", "ExtractTextTab", "Извлечение текста"),
+        "extract_text": ("_extract_tab", "smithanatool_qt.tabs.extract.tab", "ExtractTextTab", "Распознавание текста"),
         "parser_manhwa": ("_parser_manhwa_tab",
                           "smithanatool_qt.tabs.parser_manhwa_tab",
                           "ParserManhwaTab",
