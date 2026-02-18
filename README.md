@@ -14,11 +14,13 @@
 
 А также сохранение всех ваших настроек и путей!
 
+### [Подписаться на телеграм канал](https://t.me/smithanatool)
+
 <h3>Вкладка "Преобразования":<br>
 <img width="1751" height="999" alt="image" src="https://github.com/user-attachments/assets/0393c0a3-025c-4fc5-bc46-3663ddf3e967" />
 
 Секции вклакди "Преобразования":<br>
-<img width="814" height="1028" alt="image" src="https://github.com/user-attachments/assets/7e08b6be-5ea5-4c7d-b257-94e9317c97ff" />
+<img width="913" height="1111" alt="image" src="https://github.com/user-attachments/assets/7e514f56-e540-429d-b58a-d15239f746ed" />
 <img width="796" height="1060" alt="image" src="https://github.com/user-attachments/assets/6a9386c2-6083-49d3-94de-070aee1d267d" />
 <img width="821" height="690" alt="image" src="https://github.com/user-attachments/assets/61fce17c-759b-4739-ac04-92953f554367" />
 
