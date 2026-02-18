@@ -607,22 +607,6 @@ class ConversionsPanel(QWidget):
         self._apply_gif_threads_state()
         self._apply_psd_threads_state()
 
-        #  сброс состояний секций конверторов
-        # self._save_bool_ini("gif_collapsed", True)
-        # self._save_bool_ini("pdf_collapsed", True)
-        # self._save_bool_ini("psd_collapsed", True)
-        # self._save_bool_ini("png_collapsed", True)
-        #
-        # for w in (getattr(self, "box_gif", None),
-        #           getattr(self, "box_pdf", None),
-        #           getattr(self, "box_psd", None),
-        #           getattr(self, "box_png", None)):
-        #     if w is None:
-        #         continue
-        #     prev = w.blockSignals(True)
-        #     w.set_collapsed(True)
-        #     w.blockSignals(prev)
-
     def _apply_settings_from_ini(self):
         apply_bindings(self, "ConversionsPanel", [
             # GIF

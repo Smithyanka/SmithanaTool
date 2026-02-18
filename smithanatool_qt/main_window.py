@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QStatusBar, QApplication, QHBoxLayout, QLabel, QToolButton, QMenu, QSizePolicy, QStyle, QProgressBar, QMessageBox
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QStatusBar, QApplication, QHBoxLayout, \
+    QLabel, QToolButton, QMenu, QSizePolicy, QStyle, QProgressBar, QMessageBox
 from PySide6.QtCore import Qt, QSettings, QPoint, QEvent, QSize, QPointF, QRect, QTimer
 from PySide6.QtGui import QIcon, QCloseEvent
 
@@ -8,26 +9,39 @@ import time
 
 import importlib
 
-
-from smithanatool_qt.settings_bind import restore_window_geometry, save_window_geometry, group, get_value, set_value, ini_path
+from smithanatool_qt.settings_bind import restore_window_geometry, save_window_geometry, group, get_value, set_value, \
+    ini_path
 from smithanatool_qt.theme import apply_dark_theme, BORDER_DIM, BG_BASE
-
 
 from .graphic.foundation.assets import asset_path
 from .graphic.foundation.frameless import install_frameless_resize
 from .graphic.ui.titlebar import TitleBar
-
 
 _BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
 
 
 class MainWindow(QMainWindow):
     TAB_SPECS = {
-        "transform":     ("_transform_tab",    "smithanatool_qt.tabs.transform.tab",            "TransformTab",    "Преобразования"),
-        "parser_manhwa": ("_parser_manhwa_tab","smithanatool_qt.tabs.parser_manhwa_tab",    "ParserManhwaTab", "Парсер манхв Kakao"),
-        "parser_novel":  ("_parser_novel_tab", "smithanatool_qt.tabs.parser_novel_tab",     "ParserNovelTab",  "Парсер новелл Kakao"),
-        "info":          ("_info_tab",         "smithanatool_qt.tabs.info_tab",             "InfoTab",         "Инфо"),
+        "transform": ("_transform_tab",
+                      "smithanatool_qt.tabs.transform.tab",
+                      "TransformTab",
+                      "Преобразования"),
+        "extract_text": ("_extract_tab", "smithanatool_qt.tabs.extract.tab", "ExtractTextTab", "Извлечение текста"),
+        "parser_manhwa": ("_parser_manhwa_tab",
+                          "smithanatool_qt.tabs.parser_manhwa_tab",
+                          "ParserManhwaTab",
+                          "Парсер манхв Kakao"),
+        "parser_novel": ("_parser_novel_tab",
+                         "smithanatool_qt.tabs.parser_novel_tab",
+                         "ParserNovelTab",
+                         "Парсер новелл Kakao"),
+        "info": ("_info_tab",
+                 "smithanatool_qt.tabs.info_tab",
+                 "InfoTab",
+                 "Инфо"),
     }
+
+
 
     def _has_unsaved_changes(self) -> bool:
         for w in self.findChildren(QWidget):
@@ -50,6 +64,7 @@ class MainWindow(QMainWindow):
         if ov:
             ov.stop()
             self._loading = None
+
     def _restore_persisted_child_states(self, root: QWidget):
         with group("MainWindow"):
             with group("Widgets"):
@@ -76,6 +91,7 @@ class MainWindow(QMainWindow):
 
     def _reset_window_size(self):
         self.setWindowState(Qt.WindowNoState)
+        QApplication.processEvents()
         try:
             # чистим всю группу MainWindow (включая geometry и Widgets/*)
             q = QSettings(str(ini_path()), QSettings.IniFormat)
@@ -100,8 +116,14 @@ class MainWindow(QMainWindow):
             self.move(g.topLeft())
 
         try:
+            save_window_geometry(self)
+        except Exception:
+            pass
+
+        try:
             for tab in (
                     getattr(self, "_transform_tab", None),
+                    getattr(self, "_extract_tab", None),
                     getattr(self, "_parser_manhwa_tab", None),
                     getattr(self, "_parser_novel_tab", None),
                     getattr(self, "_info_tab", None),
@@ -131,9 +153,6 @@ class MainWindow(QMainWindow):
         idx = self.tabs.currentIndex()
         if idx < 0:
             return
-        self._ensure_tab_loaded(idx)
-
-
 
     def _add_lazy_tab(self, key: str, title: str):
         placeholder = QWidget()
@@ -156,7 +175,7 @@ class MainWindow(QMainWindow):
         if getattr(self, "_in_realize", False):
             return
         self._in_realize = True
-
+        self._show_loading(f"Открываю «{title}»…")
         def _do_realize():
             try:
                 # найти индекс заглушки
@@ -177,7 +196,6 @@ class MainWindow(QMainWindow):
                 print(f"[startup] realized {key} in {time.perf_counter() - t0:.3f}s")
 
                 # показываем лоадер ТОЛЬКО когда реально начинаем сборку
-                self._show_loading(f"Открываю «{title}»…")
                 inst.setProperty("tab_key", key)
                 inst.setProperty("realized", True)
                 self._restore_persisted_child_states(inst)
@@ -238,7 +256,8 @@ class MainWindow(QMainWindow):
         attr, _module_path, _class_name, title = self.TAB_SPECS[key]
         current = getattr(self, attr, None)
         if enable and current is None:
-            self._add_lazy_tab(key, title); return
+            self._add_lazy_tab(key, title);
+            return
         if not enable and current is not None:
             idx = self.tabs.indexOf(current)
             if idx != -1:
@@ -267,6 +286,9 @@ class MainWindow(QMainWindow):
             apply_dark_theme(app)
         finally:
             self.restoreGeometry(g)
+
+
+
 
     def __init__(self):
         super().__init__()
@@ -302,15 +324,14 @@ class MainWindow(QMainWindow):
 
         # === Флаги вкладок из INI ===
         enable_transform = self._ini_bool("Tabs", "transform", True)
-        enable_manhwa    = self._ini_bool("Tabs", "parser_manhwa", True)
-        enable_novel     = self._ini_bool("Tabs", "parser_novel", True)
-        enable_info      = self._ini_bool("Tabs", "info", True)
+        enable_manhwa = self._ini_bool("Tabs", "parser_manhwa", True)
+        enable_novel = self._ini_bool("Tabs", "parser_novel", True)
+        enable_info = self._ini_bool("Tabs", "info", True)
+        enable_extract = self._ini_bool("Tabs", "extract_text", True)
 
         self.setStatusBar(QStatusBar(self))
 
-
         self.statusBar().setSizeGripEnabled(False)
-
 
         sb = self.statusBar()
         # высота:
@@ -339,23 +360,25 @@ class MainWindow(QMainWindow):
             act = tabs_menu.addAction(title)
             act.setCheckable(True)
             act.setChecked(current)
+
             def on_toggle(checked: bool):
                 self._set_ini_bool("Tabs", key, checked)
                 self._ensure_tab_enabled(key, checked)
                 self._reorder_tabs_to_spec()
+
             act.toggled.connect(on_toggle)
             return act
 
-        self._act_tab_transform = add_tab_toggle("Преобразования",   "transform",     enable_transform)
-        self._act_tab_manhwa    = add_tab_toggle("Парсер манхв",     "parser_manhwa", enable_manhwa)
-        self._act_tab_novel     = add_tab_toggle("Парсер новелл",    "parser_novel",  enable_novel)
-        self._act_tab_info      = add_tab_toggle("Инфо",             "info",          enable_info)
-
+        self._act_tab_transform = add_tab_toggle("Преобразования", "transform", enable_transform)
+        self._act_tab_extract = add_tab_toggle("Извлечение текста", "extract_text", enable_extract)
+        self._act_tab_manhwa = add_tab_toggle("Парсер манхв", "parser_manhwa", enable_manhwa)
+        self._act_tab_novel = add_tab_toggle("Парсер новелл", "parser_novel", enable_novel)
+        self._act_tab_info = add_tab_toggle("Инфо", "info", enable_info)
         act_reset_zoom = menu_view.addAction("Сбросить размер окна")
         act_reset_zoom.triggered.connect(self._reset_window_size)
 
         # Вынесенный TitleBar
-        self.titlebar = TitleBar(self, view_menu=menu_view, small_text="v1.0.6")
+        self.titlebar = TitleBar(self, view_menu=menu_view, small_text="v1.1.0")
         layout.insertWidget(0, self.titlebar)
         self.menuBar().setVisible(False)
 
@@ -386,10 +409,9 @@ class MainWindow(QMainWindow):
                 if g.width() >= 200 and g.height() >= 150:
                     self._normal_geom = g
 
-
     def _style_tabs(self):
         css = """
-        
+
         QTabWidget::pane {
             border-top: 1px solid #303030;  
             border-left: 0;
@@ -400,7 +422,7 @@ class MainWindow(QMainWindow):
         }
         QTabBar {
             qproperty-drawBase: 0;
-            
+
         }
         QTabBar::tab {
             background: transparent;
@@ -411,7 +433,7 @@ class MainWindow(QMainWindow):
             padding: 8px 14px;                     
             margin: 0 8px;
             font-weight: 600;
-            
+
         }
         QTabBar::tab:hover {
             background: rgba(255,255,255,0.06);

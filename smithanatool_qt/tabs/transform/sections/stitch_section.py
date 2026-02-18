@@ -106,7 +106,7 @@ class StitchSection(QWidget):
         v.addWidget(grp_png)
 
         # Склейка по одной
-        grp_one = QGroupBox("По одной")
+        grp_one = QGroupBox("По одному")
         row_one = QHBoxLayout(grp_one); row_one.addStretch(1)
         self.btn_one = QPushButton("Склейка в один PNG")
         self.btn_one_pick = QPushButton("Выбрать файлы…")

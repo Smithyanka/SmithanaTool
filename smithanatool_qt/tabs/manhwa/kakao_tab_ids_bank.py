@@ -94,44 +94,35 @@ class IdsBankPanel:
         if cached:
             return cached
 
-        def _is_writable(dir_path: str) -> bool:
-            try:
-                os.makedirs(dir_path, exist_ok=True)
-                test = os.path.join(dir_path, ".write_test")
-                with open(test, "w", encoding="utf-8") as f:
-                    f.write("")
-                os.remove(test)
-                return True
-            except Exception:
-                return False
-
-        base: Optional[str] = None
-        try:
-            if getattr(sys, "frozen", False):
-                base = os.path.dirname(sys.executable)
+        if getattr(sys, "frozen", False):
+            base = os.path.dirname(sys.executable)
+        else:
+            cwd = os.getcwd()
+            if os.path.exists(os.path.join(cwd, "settings.ini")):
+                base = cwd
             else:
-                cwd = os.getcwd()
-                if os.path.exists(os.path.join(cwd, "settings.ini")):
-                    base = cwd
-                else:
-                    p = pathlib.Path(__file__).resolve()
-                    for parent in [p.parent, *p.parents]:
-                        if (parent / "settings.ini").exists():
-                            base = str(parent)
-                            break
-                    if not base:
-                        base = cwd
+                p = pathlib.Path(__file__).resolve()
+                base = None
+                for parent in [p.parent, *p.parents]:
+                    if (parent / "settings.ini").exists():
+                        base = str(parent)
+                        break
+                if base is None:
+                    raise RuntimeError(
+                        "settings.ini не найден — невозможно определить папку приложения"
+                    )
 
-            if not _is_writable(base):
-                app_data = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation) or ""
-                if app_data and _is_writable(app_data):
-                    base = app_data
-                else:
-                    home = os.path.expanduser("~")
-                    base = home if _is_writable(home) else os.getcwd()
-        except Exception:
-            home = os.path.expanduser("~")
-            base = home if os.path.isdir(home) else os.getcwd()
+        # проверяем, что туда МОЖНО писать
+        try:
+            os.makedirs(base, exist_ok=True)
+            test = os.path.join(base, ".write_test")
+            with open(test, "w", encoding="utf-8") as f:
+                f.write("")
+            os.remove(test)
+        except Exception as e:
+            raise RuntimeError(
+                f"Нет прав на запись в папку приложения:\n{base}\n\n{e}"
+            )
 
         self._settings_dir_cached = base
         return base

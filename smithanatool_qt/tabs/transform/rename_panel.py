@@ -256,6 +256,8 @@ class RenamePanel(QWidget):
 
     def _build_plan(self, paths: List[str]) -> Tuple[List[Tuple[str, str]], int]:
         pattern = (self.edit_pattern.text() or "{n}")
+        if "{n}" not in pattern:
+            pattern = pattern + "_{n}"
         start = int(self.spin_start.value())
         pad = int(self.spin_zeros.value())
         order = (self.cmb_order.currentText() or "Как в галерее")

@@ -11,9 +11,13 @@ ICON_PATH = BASE / "smithanatool_qt" / "assets" / "smithanatool.ico"
 
 ENTRY = "main.py"
 APPNAME = "SmithanaTool"
-datas = [(r"smithanatool_qt/assets", "assets")]
+datas = [
+    (r"smithanatool_qt/assets", "assets"),
+]
+
 hiddenimports = [
     "smithanatool_qt.tabs.transform.tab",
+    "smithanatool_qt.tabs.extract.tab",
     "smithanatool_qt.tabs.parser_manhwa_tab",
     "smithanatool_qt.tabs.parser_novel_tab",
     "smithanatool_qt.tabs.info_tab",
@@ -28,7 +32,7 @@ QT_PLUGINS = [
 ]
 QT_RES_DIRS = [
     ("PySide6/Qt/resources", "PySide6/Qt/resources"),
-    ("PySide6/Qt/translations", "PySide6/Qt/translations"),  # можно удалить из dist для экономии
+    ("PySide6/Qt/translations", "PySide6/Qt/translations"),
 ]
 
 

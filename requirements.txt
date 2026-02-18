@@ -4,3 +4,4 @@ requests>=2.31
 playwright
 psd-tools>=1.9
 urllib3>=1.26
+opencv-python>=4.12
