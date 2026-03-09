@@ -1,0 +1,34 @@
+QCheckBox {
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 6px;
+    border: 1px solid palette(mid);
+    background: palette(base);
+    image: none;
+}
+
+QCheckBox::indicator:hover {
+    border: 1px solid #2387d5;
+}
+
+QCheckBox::indicator:checked {
+    background: #2387d5;
+    image: url(:/smithanatool_qt/assets/icons/check.svg);
+}
+
+/* Неактивный */
+QCheckBox:disabled { color: #8a8f9a; }
+QCheckBox::indicator:disabled {
+    background: #24262a;
+    border: 1px solid #3a3d44;
+}
+
+
+
+
+
+

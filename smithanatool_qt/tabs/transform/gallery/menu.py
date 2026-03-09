@@ -2,11 +2,13 @@ from __future__ import annotations
 import os
 from PySide6.QtWidgets import QMenu
 from PySide6.QtCore import Qt
-from ..common import open_in_explorer
+from ..utils.fs import open_in_explorer
+
 
 # Контекстное меню вынесено в отдельную функцию
 def show_list_menu(panel, pos):
-    item = panel.list.itemAt(pos)
+    lst = panel.ui.list
+    item = lst.itemAt(pos)
     menu = QMenu(panel)
     act_add_files = menu.addAction("Добавить файлы…")
     act_add_folder = menu.addAction("Открыть папку…")
@@ -15,7 +17,7 @@ def show_list_menu(panel, pos):
     act_open_dir = menu.addAction("Открыть в проводнике")
     act_remove = menu.addAction("Удалить выбранные")
 
-    act = menu.exec_(panel.list.mapToGlobal(pos))
+    act = menu.exec_(lst.mapToGlobal(pos))
     if act == act_add_files:
         panel._open_files()
     elif act == act_add_folder:

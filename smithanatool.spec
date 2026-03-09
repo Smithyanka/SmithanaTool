@@ -13,13 +13,12 @@ ENTRY = "main.py"
 APPNAME = "SmithanaTool"
 datas = [
     (r"smithanatool_qt/assets", "assets"),
+    (r"smithanatool_qt/styles", "smithanatool_qt/styles"),
 ]
 
 hiddenimports = [
-    "smithanatool_qt.tabs.transform.tab",
-    "smithanatool_qt.tabs.extract.tab",
-    "smithanatool_qt.tabs.parser_manhwa_tab",
-    "smithanatool_qt.tabs.parser_novel_tab",
+    "smithanatool_qt.tabs.workshop.tab",
+    "smithanatool_qt.tabs.parsers.tab",
     "smithanatool_qt.tabs.info_tab",
 ]
 

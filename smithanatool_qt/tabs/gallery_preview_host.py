@@ -10,8 +10,6 @@ class GalleryPreviewHost(QWidget):
     """
     Общий каркас: GalleryPanel | PreviewPanel | (опционально) RightPanel в QSplitter.
 
-    Идея: разные вкладки "надевают" свою логику поверх одного и того же host-а.
-
     Параметры:
       - gallery_factory: Callable[[], QWidget]
       - preview_factory: Callable[[], QWidget]

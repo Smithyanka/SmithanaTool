@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Bold" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 512 512">
+  <!-- Generator: Adobe Illustrator 29.1.0, SVG Export Plug-In . SVG Version: 2.1.0 Build 142)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: #fff;
+      }
+    </style>
+  </defs>
+  <path class="st0" d="M170.7,149.3h309.3c17.7,0,32-14.3,32-32s-14.3-32-32-32H170.7c-17.7,0-32,14.3-32,32s14.3,32,32,32Z"/>
+  <path class="st0" d="M480,234.7H170.7c-17.7,0-32,14.3-32,32s14.3,32,32,32h309.3c17.7,0,32-14.3,32-32s-14.3-32-32-32Z"/>
+  <path class="st0" d="M480,384H170.7c-17.7,0-32,14.3-32,32s14.3,32,32,32h309.3c17.7,0,32-14.3,32-32s-14.3-32-32-32Z"/>
+  <circle class="st0" cx="53.3" cy="117.3" r="53.3"/>
+  <circle class="st0" cx="53.3" cy="256" r="53.3"/>
+  <circle class="st0" cx="53.3" cy="405.3" r="53.3"/>
+</svg>

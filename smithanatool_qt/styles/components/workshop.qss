@@ -1,0 +1,30 @@
+QFrame#workshopModeBar {
+    background: palette(button);
+    border: 1px solid palette(mid);
+    margin: 0 4px 0 0px;
+    border-radius: 4px;
+
+
+}
+
+QToolButton#workshopModeBtn {
+    border: none;
+    min-height: 24px;
+    border-radius: 6px;
+    outline: none;
+}
+
+
+QToolButton#workshopModeBtn:hover:!checked {
+    background: rgba($universal_2_2,0.06);
+}
+
+QToolButton#workshopModeBtn:checked {
+    background: palette(window);
+}
+
+QLineEdit[error="true"] {
+                border: 1px solid #d32f2f;
+                border-radius: 6px;
+                background: rgba(211, 47, 47, 0.08);
+            }

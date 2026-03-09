@@ -56,7 +56,7 @@ def paths_from_clipboard(parent: QWidget, cb: QClipboard) -> list[str]:
             mem_key = f"mem://pasted_{ts}.png"
             try:
                 # относительный импорт на уровень вверх (panels.preview_panel)
-                from ..preview_panel import register_memory_image
+                from ..preview.utils import register_memory_image
                 register_memory_image(mem_key, img)
                 new_paths.append(mem_key)
             except Exception:

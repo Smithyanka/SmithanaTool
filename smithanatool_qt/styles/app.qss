@@ -1,0 +1,386 @@
+
+/* Всплывающая подсказка */
+
+QToolTip {
+    border: 1px solid palette(mid);
+    background: palette(base);
+    color: palette(tool-tip-text);
+    padding: 2px 2px;
+    border-radius: 4px;
+}
+
+/* ===== Buttons ===== */
+
+QPushButton {
+    padding: 6px 8px;
+    background: palette(button);
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+}
+
+QDialogButtonBox QPushButton {
+    min-height: 15px;
+    padding: 6px 14px;
+}
+
+QPushButton:hover {
+    border-color: palette(highlight);
+
+}
+
+QPushButton:pressed {
+    background: palette(highlight);
+    border-color: palette(highlight);
+}
+
+QPushButton:disabled {
+    border-color: palette(mid);
+}
+
+/* ===== Inputs ===== */
+
+QLineEdit,
+QPlainTextEdit,
+QTextEdit {
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    padding: 4px 6px;
+    background: palette(base);
+    selection-background-color: palette(highlight);
+}
+
+QComboBox {
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    color: palette(text);
+    padding: 4px 8px;
+    background: palette(base);
+    selection-background-color: palette(highlight);
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 26px;
+    border-left: 1px solid rgba(255,255,255,0.12);
+}
+
+QComboBox::down-arrow {
+    image: url(:/assets/icons/combo_down.svg);
+    width: 12px;
+    height: 12px;
+}
+
+
+QComboBox:hover {
+    border-color: palette(highlight);
+}
+
+QComboBox:on {
+    border-color: palette(highlight);
+}
+
+QComboBox::drop-down {
+    width: 18px;
+    margin: 0;
+    padding: 0;
+}
+
+/* Dropdown list */
+QComboBox QAbstractItemView {
+    background: palette(base);
+    color: palette(text);
+    selection-background-color: palette(highlight);
+}
+
+
+
+/* Spin boxes */
+QAbstractSpinBox {
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    background: palette(base);
+    padding: 4px 4px 4px 4px;
+    selection-background-color: palette(highlight);
+}
+
+QAbstractSpinBox:disabled,
+QAbstractSpinBox:disabled QLineEdit {
+    color: palette(disabled, text);
+    background: palette(disabled, base);
+    border-color: palette(mid);
+}
+
+QAbstractSpinBox:hover {
+    border-color: palette(highlight);
+}
+
+QAbstractSpinBox:focus {
+    border-color: palette(highlight);
+}
+
+QAbstractSpinBox:disabled {
+    border-color: palette(mid);
+}
+
+/* Spin boxes видимость кнопок */
+QSpinBox, QDoubleSpinBox {
+    qproperty-buttonSymbols: NoButtons;
+    qproperty-alignment: 'AlignLeft';
+}
+
+
+QLineEdit:focus,
+QPlainTextEdit:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus,
+QComboBox:focus,
+QDateTimeEdit:focus {
+    border-color: palette(highlight);
+}
+
+/* ===== ProgressBar ===== */
+
+QProgressBar {
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    text-align: center;
+    background: rgba(255,255,255,10);
+    padding: 4px 2px;
+}
+
+QProgressBar::chunk {
+    border-radius: 4px;
+    background-color: palette(highlight);
+}
+
+/* ===== Sections ===== */
+
+QWidget#sectionsScrollContent {
+    /* -----*/
+}
+#sectionsOuter {
+    /* -----*/
+}
+
+CollapsibleSection {
+    border: 1px solid palette(button);
+    border-radius: 4px;
+    margin: 0;
+    background: palette(window);
+}
+
+
+CollapsibleSection > QToolButton#sectionHeader {
+    background: palette(button);
+    border-radius: 4px;
+    min-height: 34px;
+    padding: 4px 10px;
+    text-align: left;
+    font-weight: 600;
+    border: 1px solid transparent;
+    color: palette(window-text);
+}
+
+CollapsibleSection > QToolButton#sectionHeader:hover {
+    border-color: palette(highlight);
+}
+
+CollapsibleSection > QToolButton#sectionHeader:pressed {
+    background: palette(highlight);
+}
+
+/* ===== Loader overlay (MainWindow) ===== */
+
+
+
+
+/* ===== Minimal scrollbars (global) ===== */
+
+QScrollBar:vertical {
+    width: 10px;
+    background: transparent;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: $universal_1;
+    border-radius: 2x;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: palette(mid);
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+    border: none;
+    background: transparent;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+QScrollBar:horizontal {
+    height: 10px;
+    background: transparent;
+    margin: 0;
+}
+
+QScrollBar::handle:horizontal {
+    background: $universal_1;
+    border-radius: 2px;
+    min-width: 24px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: palette(mid);
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+    border: none;
+    background: transparent;
+}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
+/* ===== GroupBox ===== */
+
+QGroupBox {
+    background: transparent;
+    border: 1px solid palette(button);
+    border-radius: 4px;
+    margin-top: 9px;
+    padding: 10px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 10px;
+    padding: 0 6px;
+    background-color: palette(window);
+    color: palette(window-text);
+    font-weight: 600;
+}
+
+
+/* ===== QCheckBox ===== */
+
+QCheckBox {
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid palette(mid);
+    background: palette(base);
+}
+
+QCheckBox::indicator:hover {
+    border: 1px solid palette(highlight);
+}
+
+QCheckBox::indicator:checked {
+    background: palette(highlight);
+}
+
+QCheckBox::indicator:disabled {
+    background: palette(mid);
+}
+
+
+QFrame#makeSep {
+    background: palette(mid);
+    border: none;
+    margin-left: 2px;
+    margin-right: 2px;
+}
+
+/* ===== Линия для изменения размеров панелей ===== */
+
+QSplitter::handle:horizontal {
+    width: 4px;              /* зона, за которую тянуть */
+    background: transparent;
+    image: none;
+    border: none;
+}
+
+
+
+/* ===== QListWidget - списки ===== */
+
+QListWidget {
+    border-radius: 10px;
+    color: $theme;
+    outline: none;
+}
+
+QListWidget::item {
+    background: transparent;
+    border: none;
+}
+
+QListWidget::item:hover {
+    background: palette(mid);
+}
+
+QListWidget::item:selected {
+    background: palette(highlight);
+    color: $theme;
+}
+
+/* ===== QRadioButton ===== */
+
+QRadioButton {
+    color: $theme;
+    spacing: 8px;              /* расстояние между кружком и текстом */
+    background: transparent;
+}
+
+QRadioButton:hover {
+    color: $theme;
+}
+
+QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    border: 1px solid palette(mid);
+    background: palette(base);
+    margin: 6px 0;
+}
+
+QRadioButton::indicator:hover {
+    border: 1px solid palette(highlight);
+}
+
+QRadioButton::indicator:checked {
+    background: palette(highlight);
+}
+
+QLabel[role="hint"],
+ QLabel#hintLabel{
+    color: #666666;
+    font-size: 12px;
+}
+
+
+QFrame#OutDirCard {
+            border: 1px solid palette(mid);
+    border-radius: 4px;
+    padding: 4px 6px;
+    background: palette(base);
+    selection-background-color: palette(highlight);
+        }

@@ -25,13 +25,19 @@ def run_in_thread(parent, fn, *args, on_finished=None, on_failed=None, **kwargs)
     worker.moveToThread(thread)
 
     thread.started.connect(worker.run)
+
     if on_finished:
         worker.finished.connect(on_finished)
     if on_failed:
         worker.failed.connect(on_failed)
 
+    # Завершение и уборка — и для успеха, и для ошибки
     worker.finished.connect(thread.quit)
+    worker.failed.connect(thread.quit)
+
     worker.finished.connect(worker.deleteLater)
+    worker.failed.connect(worker.deleteLater)
+
     thread.finished.connect(thread.deleteLater)
 
     thread.start()

@@ -1,7 +1,8 @@
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QToolButton, QSizePolicy, QScrollArea, QStyle
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, Signal, QEvent
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QToolButton, QSizePolicy, QScrollArea, QStyle, QApplication
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, Signal, QEvent, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPen, QPalette
+
 
 class CollapsibleSection(QWidget):
     """Простой складывающийся блок (раскрыть/скрыть содержимое).
@@ -72,7 +73,7 @@ class CollapsibleSection(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
 
         # Берём цвет текста кнопки, чтобы совпадало с темой
-        color = self.toggle_button.palette().color(QPalette.ButtonText)
+        color = QApplication.palette(self.toggle_button).color(QPalette.Active, QPalette.ButtonText)
         pen = QPen(color)
         pen.setWidthF(1.6)
         pen.setCapStyle(Qt.RoundCap)

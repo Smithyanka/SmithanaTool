@@ -1,0 +1,97 @@
+/* Preview panel component (PreviewPanel) */
+
+QScrollArea#previewScroll {
+}
+
+QScrollArea#previewScroll {
+    background: palette(base);
+}
+
+QWidget#previewViewport { background: transparent; border: none; }
+QLabel#previewCanvas { background: transparent; }
+
+/* Overlay zoom buttons (property overlay=true) */
+QToolButton[overlay="true"] {
+    background-color: rgba($universal_1_2, 200);
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+    padding: 2px;
+    min-width: 20px;
+    min-height: 20px;
+    color: $theme;
+}
+
+QToolButton[overlay="true"]:hover {
+    background-color: rgba($universal_1_3, 150);
+}
+
+QToolButton[overlay="true"]:pressed {
+    background-color: rgba($universal_1_4, 85);
+}
+
+/* Overlay info bubble */
+QLabel#overlay_info {
+    background-color: rgba($universal_1_2, 180);
+    color: $theme;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* Toast */
+QLabel#preview_toast {
+    background-color: palette(highlight);
+    color: white;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+
+/* Меню вырезки и вставки */
+
+QLabel#previewInfo {
+    color: palette(mid);
+}
+
+QFrame#previewActionsPanel {
+    border: 1px solid palette(mid);
+    border-radius: 6px;
+    background: rgba($universal_1_2, 200);
+}
+
+QToolButton[role="previewAction"] {
+    border: none;
+    background: transparent;
+    padding: 6px;
+    border-radius: 6px;
+}
+
+QToolButton[role="previewAction"]:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+QToolButton[role="previewAction"]:pressed {
+    background: rgba(255, 255, 255, 60);
+}
+
+
+/* Овал */
+QToolButton#previewActionsHandle {
+    border: 1px solid palette(mid);
+    background: rgba($universal_1_2, 180);
+    border-radius: 6px;
+    padding: 0px;
+    color: white;
+    font-size: 20pt;
+}
+
+QToolButton#previewActionsHandle:hover {
+    background-color: rgba($universal_1_3, 150);
+}
+
+QToolButton#previewActionsHandle:pressed {
+    background-color: rgba($universal_1_4, 85);
+}
+
+

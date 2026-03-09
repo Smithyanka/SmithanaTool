@@ -1,0 +1,74 @@
+/* MainWindow-specific styling (main tabs + gear button).
+   Scope via objectName: QTabWidget#mainTabs, QToolButton#btnSettings
+*/
+
+QTabWidget#mainTabs::pane {
+    border-top: 1px solid $universal_1;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    padding-top: 0;
+    background: transparent;
+}
+
+QTabWidget#mainTabs QTabBar {
+    qproperty-drawBase: 0;
+}
+
+QTabWidget#mainTabs QTabBar::tab {
+    background: transparent;
+    color: $universal_2;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    border-radius: 1px;
+    padding: 8px 14px;
+    margin-right: 4px;
+    font-weight: 600;
+}
+
+QTabWidget#mainTabs QTabBar::tab:hover {
+    background: rgba($universal_2_2,0.06);
+    color: $theme;
+}
+
+QTabWidget#mainTabs QTabBar::tab:selected {
+    color: $theme;
+    border-bottom-color: palette(highlight);
+}
+
+
+QTabWidget#mainTabs QTabBar::tab:first {
+            margin-left: 4px;
+        }
+
+/* button */
+QToolButton#btnSettings,
+ QToolButton#btnLight,
+ QToolButton#btnDark{
+    padding: 4px;
+    margin: 4px 5px 2px 0;
+    border-radius: 4px;
+
+}
+
+QToolButton#btnSettings:hover,
+ QToolButton#btnLight:hover,
+ QToolButton#btnDark:hover {
+    background: palette(mid);
+
+}
+QToolButton#btnSettings:pressed,
+ QToolButton#btnLight:pressed,
+ QToolButton#btnDark:pressed {
+    background: palette(mid);
+
+}
+
+QToolButton#btnSettings::menu-indicator { image: none; }
+
+
+QMenu::separator {
+    height: 1px;
+    margin: 6px 10px;
+    background: rgba(255, 255, 255, 0.08);
+}

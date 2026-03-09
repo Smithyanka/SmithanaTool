@@ -1,0 +1,30 @@
+QFrame#galleryRoot {
+    background: palette(base);
+}
+
+QPushButton[topFrame="true"],
+QToolButton[topFrame="true"] {
+    background: palette(button);
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+}
+
+QPushButton[topFrame="true"]:hover,
+QToolButton[topFrame="true"]:hover {
+    border-color: palette(highlight);
+}
+
+QPushButton[topFrame="true"]:pressed,
+QToolButton[topFrame="true"]:pressed {
+    background: palette(highlight);
+    border-color: palette(highlight);
+}
+
+QToolButton[topFrame="true"]:checked {
+
+}
+
+QToolButton[topFrame="true"]::menu-indicator { image: none; }
+
+QPushButton[topFrame="true"][topKind="add"] { padding: 0 10px; }
+QToolButton[topFrame="true"][topKind="icon"] { padding: 6px; }

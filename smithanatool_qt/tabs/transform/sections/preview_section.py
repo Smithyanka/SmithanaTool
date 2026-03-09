@@ -1,10 +1,20 @@
-
 from __future__ import annotations
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QDoubleSpinBox, QSpinBox, QPushButton, QCheckBox, QComboBox
-from PySide6.QtCore import Qt, Signal, QRect, QPoint
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QLinearGradient, QPolygon
 
-from smithanatool_qt.settings_bind import group, bind_checkbox, get_value, set_value
+from PySide6.QtCore import Qt, Signal, QRect, QPoint
+from PySide6.QtGui import QBrush, QColor, QLinearGradient, QPainter, QPen, QPolygon
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDoubleSpinBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from smithanatool_qt.tabs.common.bind import apply_bindings
+
 
 class LevelsWidget(QWidget):
     changed = Signal(int, float, int)  # black, gamma, white
@@ -39,8 +49,8 @@ class LevelsWidget(QWidget):
     def _bar_rect(self):
         m = 12
         h = 18
-        y = (self.height() - h)//2
-        return QRect(m, y, self.width() - 2*m, h)
+        y = (self.height() - h) // 2
+        return QRect(m, y, self.width() - 2 * m, h)
 
     def paintEvent(self, e):
         p = QPainter(self)
@@ -52,10 +62,10 @@ class LevelsWidget(QWidget):
 
         # градиент от чёрного к белому в пределах бара
         grad = QLinearGradient(r.left(), r.top(), r.right(), r.top())
-        grad.setColorAt(0.0, QColor(0,0,0))
-        grad.setColorAt(1.0, QColor(255,255,255))
+        grad.setColorAt(0.0, QColor(0, 0, 0))
+        grad.setColorAt(1.0, QColor(255, 255, 255))
         p.fillRect(r, QBrush(grad))
-        p.setPen(QPen(QColor(110,110,110)))
+        p.setPen(QPen(QColor(110, 110, 110)))
         p.drawRect(r)
 
         # позиции маркеров
@@ -63,38 +73,44 @@ class LevelsWidget(QWidget):
         xw = r.left() + int(self._white / 255.0 * r.width())
         # позиция гаммы в долях между b..w
         rel = max(1, self._white - self._black)
-        p_rel = (0.5 ** (1.0 / float(self._gamma)))  # 0..1
+        p_rel = 0.5 ** (1.0 / float(self._gamma))  # 0..1
         xg_val = self._black + p_rel * rel
         xg = r.left() + int((xg_val / 255.0) * r.width())
 
         # левый (чёрный) — вверх
-        p.setBrush(QColor(20,20,20))
-        p.setPen(QPen(QColor(20,20,20)))
-        pb = QPolygon([
-            QPoint(xb-6, r.bottom()+1),
-            QPoint(xb+6, r.bottom()+1),
-            QPoint(xb, r.bottom()-7),
-        ])
+        p.setBrush(QColor(20, 20, 20))
+        p.setPen(QPen(QColor(20, 20, 20)))
+        pb = QPolygon(
+            [
+                QPoint(xb - 6, r.bottom() + 1),
+                QPoint(xb + 6, r.bottom() + 1),
+                QPoint(xb, r.bottom() - 7),
+            ]
+        )
         p.drawPolygon(pb)
 
         # правый (белый) — вверх
-        p.setBrush(QColor(230,230,230))
-        p.setPen(QPen(QColor(230,230,230)))
-        pw = QPolygon([
-            QPoint(xw-6, r.bottom()+1),
-            QPoint(xw+6, r.bottom()+1),
-            QPoint(xw, r.bottom()-7),
-        ])
+        p.setBrush(QColor(230, 230, 230))
+        p.setPen(QPen(QColor(230, 230, 230)))
+        pw = QPolygon(
+            [
+                QPoint(xw - 6, r.bottom() + 1),
+                QPoint(xw + 6, r.bottom() + 1),
+                QPoint(xw, r.bottom() - 7),
+            ]
+        )
         p.drawPolygon(pw)
 
         # средний (гамма) — вниз
-        p.setBrush(QColor(100,100,100))
-        p.setPen(QPen(QColor(100,100,100)))
-        pg = QPolygon([
-            QPoint(xg-6, r.top()-1),
-            QPoint(xg+6, r.top()-1),
-            QPoint(xg, r.top()+7),
-        ])
+        p.setBrush(QColor(100, 100, 100))
+        p.setPen(QPen(QColor(100, 100, 100)))
+        pg = QPolygon(
+            [
+                QPoint(xg - 6, r.top() - 1),
+                QPoint(xg + 6, r.top() - 1),
+                QPoint(xg, r.top() + 7),
+            ]
+        )
         p.drawPolygon(pg)
 
     # ---- взаимодействие ----
@@ -105,7 +121,7 @@ class LevelsWidget(QWidget):
 
         # текущая позиция гаммы
         rel = max(1, self._white - self._black)
-        p_rel = (0.5 ** (1.0 / float(self._gamma)))
+        p_rel = 0.5 ** (1.0 / float(self._gamma))
         xg_val = self._black + p_rel * rel
         xg = r.left() + int((xg_val / 255.0) * r.width())
 
@@ -114,7 +130,7 @@ class LevelsWidget(QWidget):
         return d[0][1] if d[0][0] <= 12 else None
 
     def mousePressEvent(self, e):
-        if e.button() != Qt.LeftButton: 
+        if e.button() != Qt.LeftButton:
             return super().mousePressEvent(e)
         self._drag = self._nearest_handle(e.position().toPoint().x())
         if self._drag:
@@ -132,9 +148,9 @@ class LevelsWidget(QWidget):
 
         b, g, w = self._black, self._gamma, self._white
         if self._drag == 'b':
-            b = min(val, w-1)
+            b = min(val, w - 1)
         elif self._drag == 'w':
-            w = max(val, b+1)
+            w = max(val, b + 1)
         elif self._drag == 'g':
             # позиция в долях между b..w
             rel = max(1, w - b)
@@ -142,6 +158,7 @@ class LevelsWidget(QWidget):
             u = min(max(u, 0.01), 0.99)
             # gamma = ln(0.5) / ln(u)  -> чтобы при u=0.5 gamma=1
             import math
+
             g = math.log(0.5) / math.log(u)
 
         self.setValues(b, g, w)
@@ -154,186 +171,143 @@ class LevelsWidget(QWidget):
 
 
 class PreviewSection(QWidget):
-    def __init__(self, preview, parent=None):
+
+    zoomUiModeChanged = Signal(int)
+    levelsChanged = Signal(int, float, int)  # black, gamma, white
+    resetLevelsRequested = Signal()
+
+    def __init__(self, preview=None, parent=None):
         super().__init__(parent)
+        # preview опционален: если передан, вернём связь для режима UI кнопок масштаба.
+        # (Остальные связи с preview/gallery не используются.)
         self._preview = preview
 
         v = QVBoxLayout(self)
 
-        row_gallery_preview = QHBoxLayout();
-        row_gallery_preview.setSpacing(8)
-        self.chk_gallery_preview = QCheckBox("Миниатюры")
-        row_gallery_preview.addWidget(self.chk_gallery_preview)
-        row_gallery_preview.addStretch(1)
-        v.addLayout(row_gallery_preview)
-
-
-        row_mode = QHBoxLayout();
-        row_mode.setSpacing(8)
-        self.chk_edit_mode = QCheckBox("Режим вырезки и вставки")
-        row_mode.addWidget(self.chk_edit_mode)
-        row_mode.addStretch(1)
-        v.addLayout(row_mode)
-
         # ── Комбобокс: расположение кнопок масштаба
-        row_zoomui = QHBoxLayout();
+        row_zoomui = QHBoxLayout()
         row_zoomui.setSpacing(8)
         lbl_zoomui = QLabel("Кнопки масштаба:")
-        cmb_zoomui = QComboBox()
-        cmb_zoomui.addItems([
+        self.cmb_zoomui = QComboBox()
+        self.cmb_zoomui.addItems([
             "Классический",  # index 0
-            "Компактный"  # index 1
+            "Компактный",  # index 1
         ])
         row_zoomui.addWidget(lbl_zoomui)
-        row_zoomui.addWidget(cmb_zoomui)
+        row_zoomui.addWidget(self.cmb_zoomui)
         row_zoomui.addStretch(1)
         v.addLayout(row_zoomui)
 
-        bind_checkbox(self.chk_edit_mode, "PreviewSection/edit_mode", True)
-        bind_checkbox(self.chk_gallery_preview, "PreviewSection/gallery_previews", False)
-
-        def _apply_gallery_preview(on: bool):
-            try:
-                gp = getattr(self._preview, "gallery_panel", None)
-                if gp is not None and hasattr(gp, "set_show_thumbnails"):
-                    gp.set_show_thumbnails(bool(on))  # мгновенно применить
-            except Exception:
-                pass
-
-        self.chk_gallery_preview.toggled.connect(_apply_gallery_preview)
-        _apply_gallery_preview(self.chk_gallery_preview.isChecked())
-
-        def _bind_combo_index(combo: QComboBox, key: str, default: int, on_apply=None):
-            # Подтягивание из ini
-            try:
-                with group("PreviewSection"):
-                    val = int(get_value(key, default))
-            except Exception:
-                val = default
-            combo.blockSignals(True)
-            combo.setCurrentIndex(0 if val not in (0, 1) else val)
-            combo.blockSignals(False)
-            if callable(on_apply):
-                try:
-                    on_apply(combo.currentIndex())
-                except Exception:
-                    pass
-
-            # Сохранение в ini + применение при изменении
-            def _save(idx: int):
-                try:
-                    with group("PreviewSection"):
-                        set_value(key, int(idx))
-                except Exception:
-                    pass
-                if callable(on_apply):
-                    try:
-                        on_apply(int(idx))
-                    except Exception:
-                        pass
-
-            combo.currentIndexChanged.connect(_save)
-
-        # применяем «как у чекбокса»: ini → UI → превью
-        _bind_combo_index(
-            cmb_zoomui,
-            "zoom_ui_mode",
-            0,
-            on_apply=lambda idx: (
-                self._preview.set_zoom_ui_mode(int(idx))
-                if (self._preview is not None and hasattr(self._preview, "set_zoom_ui_mode"))
-                else None
-            )
-        )
-
-        def _apply_edit_mode(on: bool):
-            try:
-                if self._preview is not None and hasattr(self._preview, "set_cut_paste_mode_enabled"):
-                    self._preview.set_cut_paste_mode_enabled(bool(on))
-            except Exception:
-                pass
-
-        self.chk_edit_mode.toggled.connect(_apply_edit_mode)
-        _apply_edit_mode(self.chk_edit_mode.isChecked())
-
-
-
-        v.addSpacing(12)
-        bind_checkbox(self.chk_edit_mode, "PreviewSection/edit_mode", True)
+        apply_bindings(self, "PreviewSection", [
+            (self.cmb_zoomui, "zoom_ui_mode", 1),
+        ])
+        self.cmb_zoomui.currentIndexChanged.connect(self._on_zoom_ui_changed)
 
         # Ползунок уровней
         self.levels = LevelsWidget()
         v.addWidget(self.levels)
 
         # Поля: 0, 1.00, 255
-        row = QHBoxLayout(); row.setSpacing(8)
-        self.lbl_b = QLabel("Чёрная:"); self.sb_b = QSpinBox(); self.sb_b.setRange(0,254); self.sb_b.setValue(0)
-        self.lbl_g = QLabel("Середина:"); self.sb_g = QDoubleSpinBox(); self.sb_g.setDecimals(2); self.sb_g.setRange(0.10,5.00); self.sb_g.setSingleStep(0.01); self.sb_g.setValue(1.00)
-        self.lbl_w = QLabel("Белая:"); self.sb_w = QSpinBox(); self.sb_w.setRange(1,255); self.sb_w.setValue(255)
-        row.addWidget(self.lbl_b); row.addWidget(self.sb_b); 
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.lbl_b = QLabel("Чёрная:")
+        self.sb_b = QSpinBox()
+        self.sb_b.setRange(0, 254)
+        self.sb_b.setValue(0)
+
+        self.lbl_g = QLabel("Середина:")
+        self.sb_g = QDoubleSpinBox()
+        self.sb_g.setDecimals(2)
+        self.sb_g.setRange(0.10, 5.00)
+        self.sb_g.setSingleStep(0.01)
+        self.sb_g.setValue(1.00)
+
+        self.lbl_w = QLabel("Белая:")
+        self.sb_w = QSpinBox()
+        self.sb_w.setRange(1, 255)
+        self.sb_w.setValue(255)
+
+        row.addWidget(self.lbl_b)
+        row.addWidget(self.sb_b)
         row.addSpacing(12)
-        row.addWidget(self.lbl_g); row.addWidget(self.sb_g);
+        row.addWidget(self.lbl_g)
+        row.addWidget(self.sb_g)
         row.addSpacing(12)
-        row.addWidget(self.lbl_w); row.addWidget(self.sb_w);
+        row.addWidget(self.lbl_w)
+        row.addWidget(self.sb_w)
         row.addStretch(1)
         v.addLayout(row)
 
         # "Сбросить" — справа
-        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
         self.btn_reset = QPushButton("Сбросить")
         self.btn_reset.setToolTip("Вернуть уровни: 0 / 1.00 / 255")
         btn_row.addStretch(1)
-        btn_row.addWidget(self.btn_reset)  # прижим к правому краю
+        btn_row.addWidget(self.btn_reset)
         v.addLayout(btn_row)
         self.btn_reset.clicked.connect(self._on_reset_clicked)
 
-        # связка чекбокса с превью
-        def _apply_edit_mode(on: bool):
-            try:
-                if self._preview is not None and hasattr(self._preview, "set_cut_paste_mode_enabled"):
-                    self._preview.set_cut_paste_mode_enabled(bool(on))
-            except Exception:
-                pass
+        # ---- синхронизация и наружные сигналы ----
+        self._suppress_emit = True
 
-        self.chk_edit_mode.toggled.connect(_apply_edit_mode)
-        _apply_edit_mode(self.chk_edit_mode.isChecked())
-
-        # Синхронизация
-        def _push_to_preview(b, g, w):
-            try:
-                if self._preview is not None and hasattr(self._preview, 'set_levels_preview'):
-                    self._preview.set_levels_preview(b, g, w)
-            except Exception:
-                pass
-
-        def _lvl_changed(b, g, w):
+        def _on_levels_widget_changed(b: int, g: float, w: int):
             # обновить поля
             try:
-                self.sb_b.blockSignals(True); self.sb_w.blockSignals(True); self.sb_g.blockSignals(True)
-                self.sb_b.setValue(int(b)); self.sb_w.setValue(int(w)); self.sb_g.setValue(float(g))
+                self.sb_b.blockSignals(True)
+                self.sb_w.blockSignals(True)
+                self.sb_g.blockSignals(True)
+                self.sb_b.setValue(int(b))
+                self.sb_w.setValue(int(w))
+                self.sb_g.setValue(float(g))
             finally:
-                self.sb_b.blockSignals(False); self.sb_w.blockSignals(False); self.sb_g.blockSignals(False)
-            _push_to_preview(b, g, w)
+                self.sb_b.blockSignals(False)
+                self.sb_w.blockSignals(False)
+                self.sb_g.blockSignals(False)
 
-        self.levels.changed.connect(_lvl_changed)
+            if not self._suppress_emit:
+                self.levelsChanged.emit(int(b), float(g), int(w))
+
+        self.levels.changed.connect(_on_levels_widget_changed)
 
         def _spin_changed():
-            b = int(self.sb_b.value()); g = float(self.sb_g.value()); w = int(self.sb_w.value())
+            b = int(self.sb_b.value())
+            g = float(self.sb_g.value())
+            w = int(self.sb_w.value())
             self.levels.setValues(b, g, w)
-            _push_to_preview(b, g, w)
+            # levelsChanged будет эмититься из _on_levels_widget_changed
 
         self.sb_b.valueChanged.connect(lambda _: _spin_changed())
         self.sb_w.valueChanged.connect(lambda _: _spin_changed())
         self.sb_g.valueChanged.connect(lambda _: _spin_changed())
 
-        # начальное состояние
+        # начальное состояние (без эмита наружу)
         self.levels.setValues(0, 1.00, 255)
+        self._suppress_emit = False
+
+        # применим/сообщим текущее значение режима UI кнопок масштаба
+        self._apply_zoom_ui_mode(int(self.cmb_zoomui.currentIndex()), emit_signal=True)
 
     def _on_reset_clicked(self):
         # Сброс на дефолтные значения
         self.levels.setValues(0, 1.00, 255)
+        self.resetLevelsRequested.emit()
+
+    # ---- zoom ui mode (кнопки масштаба) ----
+    def _on_zoom_ui_changed(self, idx: int) -> None:
+        self._apply_zoom_ui_mode(int(idx), emit_signal=True)
+
+    def _apply_zoom_ui_mode(self, mode: int, *, emit_signal: bool) -> None:
         try:
-            if self._preview is not None and hasattr(self._preview, 'reset_levels_preview'):
-                self._preview.reset_levels_preview()
+            p = self._preview
+            if p is not None and hasattr(p, "set_zoom_ui_mode"):
+                p.set_zoom_ui_mode(int(mode))
         except Exception:
+            # Превью может быть не готово/не того типа — не считаем это ошибкой UI.
             pass
+
+        if emit_signal:
+            try:
+                self.zoomUiModeChanged.emit(int(mode))
+            except Exception:
+                pass

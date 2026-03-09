@@ -47,7 +47,6 @@ def group(name: str):
 def set_value(key: str, value: Any):
     _settings.setValue(_prefixed(key), value)
     _settings.sync()
-    _settings.sync()
 
 def get_value(key: str, default: Any=None, typ: Optional[type]=None):
     key = _prefixed(key)

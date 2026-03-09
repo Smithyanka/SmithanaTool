@@ -6,22 +6,14 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QProgressDialog, QApplication, QCheckBox, QComboBox, QLineEdit
 )
 from PySide6.QtCore import Qt, QTimer
-from smithanatool_qt.settings_bind import group
-
-from smithanatool_qt.tabs.common.bind import apply_bindings
+from smithanatool_qt.tabs.common.bind import (
+    apply_bindings, reset_bindings,
+    ini_save_str, ini_save_int
+)
 from smithanatool_qt.tabs.common.defaults import DEFAULTS
 
+from ..utils.fs import open_in_explorer
 
-def _open_in_explorer(path: str):
-    try:
-        if sys.platform.startswith('win'):
-            os.startfile(path)  # type: ignore
-        elif sys.platform.startswith('darwin'):
-            subprocess.Popen(['open', path])
-        else:
-            subprocess.Popen(['xdg-open', path])
-    except Exception:
-        pass
 
 class CutSection(QWidget):
     def __init__(self, preview=None, parent=None, paths_provider=None):
@@ -48,7 +40,7 @@ class CutSection(QWidget):
         self.lbl_count = QLabel("Количество фрагментов:")
         row1.addWidget(self.lbl_count)
         self.spin_slices = QSpinBox();
-        self.spin_slices.setRange(2, 99);
+        self.spin_slices.setRange(2, 100);
         self.spin_slices.setValue(8)
         row1.addWidget(self.spin_slices)
         row1.addStretch(1)
@@ -61,7 +53,6 @@ class CutSection(QWidget):
         self.spin_height.setRange(100, 30000)
         self.spin_height.setSingleStep(50)
         self.spin_height.setValue(2000)
-        self.spin_height.setFixedWidth(55)
         row1h.addWidget(self.lbl_height)
         row1h.addWidget(self.spin_height)
         row1h.addStretch(1)
@@ -92,7 +83,7 @@ class CutSection(QWidget):
         row_threads.addWidget(self.chk_auto_threads)
         row_threads.addWidget(self.lbl_threads)
         row_threads.addWidget(self.spin_threads)
-        row_threads.addStretch(1)
+        row_threads.addStretch(10)
         v.addLayout(row_threads)
 
         # синхронизация состояния
@@ -117,7 +108,7 @@ class CutSection(QWidget):
         row2.setContentsMargins(0, 8, 0, 0)
         row2.addStretch(1)
         self.btn_toggle = QPushButton("Вкл")
-        self.btn_toggle.setMinimumWidth(60)
+        self.btn_toggle.setMinimumWidth(55)
         self.btn_toggle.setCheckable(True)
         self.btn_toggle.setChecked(False)  # по умолчанию выкл
         self.btn_save = QPushButton("Нарезать выделенные")
@@ -129,7 +120,7 @@ class CutSection(QWidget):
         help_text = ("Чтобы поменять высоту фрагментов, зажмите ПКМ")
         lbl = QLabel(help_text)
         lbl.setWordWrap(True)
-        lbl.setStyleSheet("font-size: 12px; color: #454545;")
+        lbl.setProperty("role", "hint")
         v.addWidget(lbl)
 
         self.combo_mode.currentIndexChanged.connect(self._on_mode_changed)
@@ -159,16 +150,6 @@ class CutSection(QWidget):
                 self.btn_toggle.setChecked(False)
                 self.btn_toggle.setText("Вкл")
 
-    def _ini_load_str(self, key: str, default: str = "") -> str:
-        try:
-            shadow_attr = f"__{key}__shadow"
-            setattr(self, shadow_attr, default)
-            with group("CutSection"):
-                from smithanatool_qt.settings_bind import bind_attr_string
-                bind_attr_string(self, shadow_attr, key, default)
-            return getattr(self, shadow_attr, default)
-        except Exception:
-            return default
     def _on_preview_slice_count_changed(self, n: int):
         # Обновляем UI, но без обратного вызова _on_count_changed
         try:
@@ -178,7 +159,7 @@ class CutSection(QWidget):
         finally:
             self.spin_slices.blockSignals(False)
         # Сохраним в INI, чтобы новое значение не потерялось
-        self._save_int_ini("slices", int(self.spin_slices.value()))
+        ini_save_int("CutSection", "slices", int(self.spin_slices.value()))
 
     def _on_preview_path_changed(self, path: str):
         # было: синхронизация кнопки
@@ -243,7 +224,7 @@ class CutSection(QWidget):
             return
 
         self._cut_out_dir_le.setText(out_dir)
-        self._save_str_ini("cut_out_dir", out_dir)
+        ini_save_str("CutSection", "cut_out_dir", out_dir)
 
         auto_threads = bool(self.chk_auto_threads.isChecked())
         threads = int(self.spin_threads.value())
@@ -302,7 +283,7 @@ class CutSection(QWidget):
         box.addButton(QMessageBox.Ok)
         box.exec()
         if box.clickedButton() is btn_open:
-            _open_in_explorer(out_dir)
+            open_in_explorer(out_dir)
 
 
     def _current_slice_by(self) -> str:
@@ -320,7 +301,7 @@ class CutSection(QWidget):
         self.spin_height.setVisible(not show_count)
 
         # сохранить в ini (как строку)
-        self._save_str_ini("slice_by", by)
+        ini_save_str("CutSection", "slice_by", by)
 
         # если режим уже включён — пересчитать превью
         if self._preview and getattr(self._preview, "_slice_enabled", False):
@@ -352,74 +333,15 @@ class CutSection(QWidget):
         except Exception:
             pass
     def reset_to_defaults(self):
-        defaults = dict(
-            slices=8,
-            height_px=2000,
-            slice_by="count",
-            show_labels=True,
-            auto_threads=True,
-            threads=6,
-        )
+        reset_bindings(self, "CutSection")
 
-        if hasattr(self, "spin_height"):
-            self.spin_height.setValue(defaults["height_px"])
-        if hasattr(self, "combo_mode"):
-            self.combo_mode.setCurrentIndex(0 if defaults["slice_by"] == "count" else 1)
-        if hasattr(self, "spin_slices"):
-            self.spin_slices.setValue(defaults["slices"])
-        if hasattr(self, "chk_show_labels"):
-            self.chk_show_labels.setChecked(defaults["show_labels"])
-
-        if hasattr(self, "chk_auto_threads"):
-            self.chk_auto_threads.setChecked(defaults["auto_threads"])
-        if hasattr(self, "spin_threads"):
-            self.spin_threads.setValue(defaults["threads"])
-            # включаем/выключаем в соответствии с авто-режимом
-            self.spin_threads.setEnabled(not defaults["auto_threads"])
-
-        if hasattr(self, "lbl_threads"):
-            self.lbl_threads.setEnabled(not defaults["auto_threads"])
-
-        # сохранить в INI
-        self._save_int_ini("slices", defaults["slices"])
-        self._save_bool_ini("show_labels", defaults["show_labels"])
-        self._save_bool_ini("auto_threads", defaults["auto_threads"])
-        self._save_int_ini("threads", defaults["threads"])
-        self._save_int_ini("height_px", defaults["height_px"])
-        self._save_str_ini("slice_by", defaults["slice_by"])
-
+        # режим по умолчанию: "по количеству"
         try:
-            if hasattr(self, "chk_auto_threads"):
-                self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini("auto_threads", v))
-                # чтобы UI сразу блокировал/разблокировал спин:
-                self.chk_auto_threads.toggled.connect(lambda on: self.spin_threads.setEnabled(not on))
-        except Exception:
-            pass
-
-        try:
-            if hasattr(self, "_on_count_changed"):
-                self._on_count_changed(defaults["slices"])
-            if hasattr(self, "_preview") and self._preview:
-                if hasattr(self._preview, "label"):
-                    self._preview.label.set_show_slice_labels(defaults["show_labels"])
-        except Exception:
-            pass
-
-    def _save_str_ini(self, key: str, value: str):
-        try:
-            shadow_attr = f"__{key}__shadow"
-            setattr(self, shadow_attr, value)
-            with group("CutSection"):
-                from smithanatool_qt.settings_bind import save_attr_string
-                save_attr_string(self, shadow_attr, key)
-        except Exception:
-            pass
-
-    def _save_int_ini(self, key: str, value: int):
-        self._save_str_ini(key, str(int(value)))
-
-    def _save_bool_ini(self, key: str, value: bool):
-        self._save_str_ini(key, "1" if value else "0")
+            self.combo_mode.blockSignals(True)
+            self.combo_mode.setCurrentIndex(0)
+        finally:
+            self.combo_mode.blockSignals(False)
+        self._on_mode_changed(self.combo_mode.currentIndex())
 
     def _on_toggle(self, checked: bool):
         if not self._preview:
@@ -472,7 +394,7 @@ class CutSection(QWidget):
         if not out_dir:
             return
         self._cut_out_dir_le.setText(out_dir)
-        self._save_str_ini("cut_out_dir", out_dir)
+        ini_save_str("CutSection", "cut_out_dir", out_dir)
 
         auto_threads = bool(self.chk_auto_threads.isChecked())
         threads = int(self.spin_threads.value())
@@ -496,7 +418,7 @@ class CutSection(QWidget):
             btn_open = box.addButton("Открыть папку", QMessageBox.ActionRole)
             box.addButton(QMessageBox.Ok);
             box.exec()
-            if box.clickedButton() is btn_open: _open_in_explorer(out_dir)
+            if box.clickedButton() is btn_open: open_in_explorer(out_dir)
         else:
             QMessageBox.information(self, "Нарезка", "Нет фрагментов для сохранения.")
 
@@ -512,8 +434,11 @@ class CutSection(QWidget):
 
             # директория сохранения (скрытое поле)
             (self._cut_out_dir_le, "cut_out_dir", DEFAULTS["cut_out_dir"]),
+
+            # строковые флаги
+            (self._slice_by_le, "slice_by", "count"),
         ])
-        by = self._ini_load_str("slice_by", "count")
+        by = (self._slice_by_le.text() or "count")
         self.combo_mode.setCurrentIndex(0 if by == "count" else 1)
         self._on_mode_changed(self.combo_mode.currentIndex())
 

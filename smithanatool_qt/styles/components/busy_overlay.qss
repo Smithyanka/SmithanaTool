@@ -1,0 +1,14 @@
+/* BusyOverlay — component stylesheet */
+
+QWidget#busyOverlay {
+    background-color: rgba(0,0,0,150);
+}
+
+QWidget#busyOverlay QLabel#busyOverlayLabel {
+    color: white;
+    font-size: 20px;
+    font-weight: 600;
+    padding: 14px 22px;
+    border-radius: 10px;
+}
+

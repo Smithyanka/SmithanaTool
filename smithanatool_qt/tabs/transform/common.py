@@ -15,17 +15,6 @@ def _runtime_supported_ext() -> set[str]:
 
 SUPPORTED_EXT = _runtime_supported_ext()
 
-def natural_key(path: str):
-    """Естественная сортировка по имени файла (учитывает числа)."""
-    name = os.path.basename(path)
-    return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', name)]
-
-def mtime_key(path: str) -> float:
-    """Ключ сортировки по времени модификации файла."""
-    try:
-        return os.path.getmtime(path)
-    except Exception:
-        return 0.0
 
 def is_image(path: str) -> bool:
     if isinstance(path, str) and path.startswith("mem://"):
@@ -52,11 +41,3 @@ def dedup_keep_order(items):
             out.append(x)
     return out
 
-def open_in_explorer(folder: str):
-    import sys, subprocess
-    if os.name == 'nt':
-        os.startfile(folder)
-    elif sys.platform == 'darwin':
-        subprocess.run(['open', folder])
-    else:
-        subprocess.run(['xdg-open', folder])

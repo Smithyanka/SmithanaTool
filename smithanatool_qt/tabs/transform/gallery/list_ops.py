@@ -4,12 +4,14 @@ from PySide6.QtCore import Qt
 
 # Набор операций над списком вынесен сюда, чтобы разгрузить GalleryPanel
 def sync_files_from_list(panel) -> None:
-    panel._files = [panel.list.item(i).data(Qt.UserRole) for i in range(panel.list.count())]
+    lst = panel.ui.list
+    panel._files = [lst.item(i).data(Qt.UserRole) for i in range(lst.count())]
     panel._refresh_labels()
     panel.filesChanged.emit(panel.files())
 
 def delete_selected(panel, *, confirm: Optional[bool] = True) -> None:
-    rows = sorted({panel.list.row(i) for i in panel.list.selectedItems()}, reverse=True)
+    lst = panel.ui.list
+    rows = sorted({lst.row(i) for i in lst.selectedItems()}, reverse=True)
     if not rows:
         return
 
@@ -23,12 +25,12 @@ def delete_selected(panel, *, confirm: Optional[bool] = True) -> None:
         if 0 <= r < len(panel._files):
             removed_paths.append(panel._files[r])
             panel._files.pop(r)
-            panel.list.takeItem(r)
+            lst.takeItem(r)
     for p in removed_paths:
         panel._added_order.pop(p, None)
 
     try:
-        from ..preview_panel import unregister_memory_images
+        from ..preview.utils import unregister_memory_images
         unregister_memory_images(removed_paths)
     except Exception:
         pass
@@ -48,7 +50,7 @@ def clear_all(panel) -> None:
         return
 
     try:
-        from ..preview_panel import unregister_memory_images
+        from ..preview.utils import unregister_memory_images
         unregister_memory_images(panel._files)
     except Exception:
         pass
@@ -67,31 +69,33 @@ def clear_all(panel) -> None:
 def _restore_current(panel, cur_path):
     if not cur_path:
         return
-    for idx in range(panel.list.count()):
-        if panel.list.item(idx).data(Qt.UserRole) == cur_path:
-            panel.list.setCurrentRow(idx)
+    lst = panel.ui.list
+    for idx in range(lst.count()):
+        if lst.item(idx).data(Qt.UserRole) == cur_path:
+            lst.setCurrentRow(idx)
             break
 
 def move_up_one_step(panel) -> None:
-    n = panel.list.count()
+    lst = panel.ui.list
+    n = lst.count()
     if n <= 1:
         return
-    bar = panel.list.verticalScrollBar()
+    bar = lst.verticalScrollBar()
     keep_scroll = bar.value()
-    cur_idx = panel.list.currentRow()
-    cur_path = panel.list.item(cur_idx).data(Qt.UserRole) if 0 <= cur_idx < n else None
-    sel = [panel.list.item(i).isSelected() for i in range(n)]
+    cur_idx = lst.currentRow()
+    cur_path = lst.item(cur_idx).data(Qt.UserRole) if 0 <= cur_idx < n else None
+    sel = [lst.item(i).isSelected() for i in range(n)]
 
-    panel.list.blockSignals(True)
+    lst.blockSignals(True)
     for i in range(1, n):
         if sel[i] and not sel[i - 1]:
-            it = panel.list.takeItem(i)
-            panel.list.insertItem(i - 1, it)
+            it = lst.takeItem(i)
+            lst.insertItem(i - 1, it)
             it.setSelected(True)
-            panel.list.item(i).setSelected(False)
+            lst.item(i).setSelected(False)
             panel._files[i - 1], panel._files[i] = panel._files[i], panel._files[i - 1]
             sel[i - 1], sel[i] = sel[i], sel[i]
-    panel.list.blockSignals(False)
+    lst.blockSignals(False)
 
     _restore_current(panel, cur_path)
     bar.setValue(keep_scroll)
@@ -99,25 +103,26 @@ def move_up_one_step(panel) -> None:
     panel.filesChanged.emit(panel.files())
 
 def move_down_one_step(panel) -> None:
-    n = panel.list.count()
+    lst = panel.ui.list
+    n = lst.count()
     if n <= 1:
         return
-    bar = panel.list.verticalScrollBar()
+    bar = lst.verticalScrollBar()
     keep_scroll = bar.value()
-    cur_idx = panel.list.currentRow()
-    cur_path = panel.list.item(cur_idx).data(Qt.UserRole) if 0 <= cur_idx < n else None
-    sel = [panel.list.item(i).isSelected() for i in range(n)]
+    cur_idx = lst.currentRow()
+    cur_path = lst.item(cur_idx).data(Qt.UserRole) if 0 <= cur_idx < n else None
+    sel = [lst.item(i).isSelected() for i in range(n)]
 
-    panel.list.blockSignals(True)
+    lst.blockSignals(True)
     for i in range(n - 2, -1, -1):
         if sel[i] and not sel[i + 1]:
-            it = panel.list.takeItem(i)
-            panel.list.insertItem(i + 1, it)
+            it = lst.takeItem(i)
+            lst.insertItem(i + 1, it)
             it.setSelected(True)
-            panel.list.item(i).setSelected(False)
+            lst.item(i).setSelected(False)
             panel._files[i], panel._files[i + 1] = panel._files[i + 1], panel._files[i]
             sel[i], sel[i + 1] = sel[i + 1], sel[i]
-    panel.list.blockSignals(False)
+    lst.blockSignals(False)
 
     _restore_current(panel, cur_path)
     bar.setValue(keep_scroll)

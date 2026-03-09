@@ -1,0 +1,33 @@
+
+/* Секция (контейнер) */
+QWidget#ConversionsPanel #collSection {
+    border-radius: 4px;
+    background: palette(window);
+
+}
+
+QWidget#ConversionsPanel QToolButton#convSectionHeader {
+    background: transparent;
+    border: none;
+    padding: 5px;
+}
+
+QWidget#ConversionsPanel QToolButton#convSectionHeader:hover {
+    background: transparent;
+}
+
+QWidget#ConversionsPanel QToolButton#convSectionHeader:pressed {
+    background: transparent;
+}
+
+/* Контент секции */
+QWidget#ConversionsPanel QFrame#sectionContent {
+    background: transparent;
+    border: none;
+}
+
+/* Примечания */
+QWidget#ConversionsPanel QLabel[role="hint"] {
+    color: #454545;
+    font-size: 12px;
+}
