@@ -10,43 +10,13 @@ import requests
 
 from smithanatool_qt.tabs.parsers.kakao.shared.utils.kakao_common import apply_raw_cookie, parse_json_response
 
-GRAPHQL_URL = 'https://bff-page.kakao.com/graphql'
+CONTENT_PRODUCT_LIST_URL = 'https://bff-page.kakao.com/api/gateway/api/v2/content/product/list'
 VIEWER_DATA_URL = 'https://bff-page.kakao.com/api/gateway/api/v1/viewer/data'
 TICKET_READY_URL = 'https://bff-page.kakao.com/api/gateway/api/v1/ticket/ready_to_use'
 TICKET_LIST_URL = 'https://bff-page.kakao.com/api/gateway/api/v1/ticket/list'
 TICKET_BUY_URL = 'https://bff-page.kakao.com/api/gateway/api/v1/ticket/buy'
 TICKET_USE_URL = 'https://bff-page.kakao.com/api/gateway/api/v1/ticket/use'
 OPEN_PAGE_URL = 'https://bff-page.kakao.com/api/gateway/api/v5/inven/open_page'
-
-CONTENT_HOME_PRODUCT_LIST = """
-query contentHomeProductList(
-  $after: String,
-  $first: Int,
-  $seriesId: Long!,
-  $boughtOnly: Boolean,
-  $sortType: String
-) {
-  contentHomeProductList(
-    seriesId: $seriesId
-    after: $after
-    first: $first
-    boughtOnly: $boughtOnly
-    sortType: $sortType
-  ) {
-    totalCount
-    pageInfo { hasNextPage endCursor hasPreviousPage startCursor }
-    edges {
-      cursor
-      node {
-        row1
-        scheme
-        single { productId isFree title slideType operatorProperty { isTextViewer } }
-        isViewed
-      }
-    }
-  }
-}
-""".strip()
 
 
 class KakaoPageApi:
@@ -109,29 +79,6 @@ class KakaoPageApi:
                     raise
         raise RuntimeError(str(last_error) if last_error else 'Неизвестная ошибка запроса JSON')
 
-    def post_graphql(
-        self,
-        operation_name: str,
-        query: str,
-        variables: dict,
-        *,
-        timeout: int = 30,
-        operation_type: str = 'query',
-    ) -> dict:
-        payload = {
-            'operationName': operation_name,
-            'query': query,
-            'variables': variables,
-        }
-        headers = {
-            'x-apollo-operation-name': operation_name,
-            'x-apollo-operation-type': operation_type,
-        }
-        data = self.request_json('POST', GRAPHQL_URL, json=payload, headers=headers, timeout=timeout)
-        if data.get('errors'):
-            raise RuntimeError(f"GraphQL errors: {data['errors']}")
-        return data
-
     @staticmethod
     def _unwrap_rest_result(data: dict, *, op: str) -> dict[str, Any]:
         if not isinstance(data, dict):
@@ -185,28 +132,92 @@ class KakaoPageApi:
         return data if isinstance(data, dict) else {}
 
     def list_episodes(self, series_id: int, sort: str = 'desc', page_size: int = 200):
-        after = None
+        del sort  # новый REST-эндпоинт в HAR использует cursor_index/cursor_direction, а не sortType
+
+        cursor_index = 0
+        cursor_direction = 'ANCHOR'
+        seen_product_ids: set[int] = set()
+
         while True:
-            variables = {
-                'seriesId': int(series_id),
-                'sortType': sort,
-                'boughtOnly': False,
-                'first': int(page_size),
-            }
-            if after:
-                variables['after'] = after
+            data = self.request_json(
+                'GET',
+                CONTENT_PRODUCT_LIST_URL,
+                params={
+                    'series_id': int(series_id),
+                    'cursor_index': int(cursor_index),
+                    'cursor_direction': cursor_direction,
+                    'window_size': int(page_size),
+                },
+                timeout=15,
+            )
 
-            payload = self.post_graphql('contentHomeProductList', CONTENT_HOME_PRODUCT_LIST, variables, timeout=15)
-            data = ((payload.get('data') or {}).get('contentHomeProductList') or {})
-            for edge in data.get('edges') or []:
-                if isinstance(edge, dict):
-                    yield edge
-
-            page = data.get('pageInfo') or {}
-            if page.get('hasNextPage'):
-                after = page.get('endCursor')
-            else:
+            result = self._unwrap_rest_result(data, op='content/product/list')
+            rows = result.get('list') or []
+            if not isinstance(rows, list) or not rows:
                 break
+
+            yielded_any = False
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+
+                item = row.get('item') or {}
+                if not isinstance(item, dict):
+                    continue
+
+                product_id = item.get('product_id')
+                try:
+                    product_id_int = int(product_id)
+                except Exception:
+                    continue
+
+                if product_id_int in seen_product_ids:
+                    continue
+                seen_product_ids.add(product_id_int)
+
+                operator_property = item.get('operator_property') or {}
+                service_property = item.get('service_property') or {}
+                last_view = service_property.get('last_view') or {}
+
+                edge = {
+                    'cursor': str(row.get('cursor_index') or ''),
+                    'node': {
+                        'row1': item.get('title') or '',
+                        'scheme': None,
+                        'single': {
+                            'productId': product_id_int,
+                            'isFree': bool(item.get('is_free')),
+                            'title': item.get('title') or '',
+                            'slideType': item.get('slide_type'),
+                            'operatorProperty': {
+                                'isTextViewer': bool(operator_property.get('is_text_viewer', False))
+                            },
+                        },
+                        'isViewed': bool(last_view),
+                    },
+                }
+
+                yield edge
+                yielded_any = True
+
+            if not yielded_any:
+                break
+
+            if not result.get('has_next'):
+                break
+
+            last_row = rows[-1] if rows else {}
+            next_cursor = last_row.get('cursor_index')
+            if next_cursor is None:
+                break
+
+            try:
+                cursor_index = int(next_cursor)
+            except Exception:
+                break
+
+            cursor_direction = 'NEXT'
 
     def ready_to_use_ticket(self, series_id: int, product_id: int) -> dict:
         del series_id

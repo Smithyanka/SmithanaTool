@@ -76,7 +76,7 @@ class ParserNovelTab(NovelTabStateMixin, NovelTabRunMixin, BaseParserPage):
         gl.addLayout(mode_row, row, 1, 1, 2)
         row += 1
 
-        self.lbl_spec = QLabel('Product ID(ы):')
+        self.lbl_spec = QLabel('Viewer ID:')
         self.ed_spec = QLineEdit()
         self.ed_spec.setPlaceholderText('например: 49248366, 49248367')
         gl.addWidget(self.lbl_spec, row, 0)

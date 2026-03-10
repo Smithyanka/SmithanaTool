@@ -29,7 +29,7 @@ class NovelTabStateMixin(CommonParserStateMixin):
 
     def _update_mode(self) -> None:
         if self.rb_id.isChecked():
-            self.lbl_spec.setText('Product ID(ы):')
+            self.lbl_spec.setText('Viewer ID:')
             self.ed_spec.setPlaceholderText('например: 49248366, 49248367')
             self.ed_spec.setValidator(self._val_csv_ints)
             self.lbl_spec.show()
