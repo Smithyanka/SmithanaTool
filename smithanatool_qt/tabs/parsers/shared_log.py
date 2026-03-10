@@ -27,7 +27,7 @@ class SharedLogPanel(QWidget):
         self._append_log: Optional[Callable[[str], None]] = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 10, 0)
+        layout.setContentsMargins(0, 8, 10, 0)
         layout.setSpacing(6)
 
         layout.addWidget(QLabel("Лог:"))

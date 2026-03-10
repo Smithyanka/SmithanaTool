@@ -41,7 +41,7 @@ class ParserNovelTab(NovelTabStateMixin, NovelTabRunMixin, BaseParserPage):
         self._had_error = False
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 10)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         splitter = QSplitter(Qt.Horizontal, self)
         self.splitter = splitter
@@ -51,7 +51,7 @@ class ParserNovelTab(NovelTabStateMixin, NovelTabRunMixin, BaseParserPage):
         gl = QGridLayout(left)
         gl.setHorizontalSpacing(4)
         gl.setVerticalSpacing(9)
-        gl.setContentsMargins(15, 0, 4, 20)
+        gl.setContentsMargins(15, 0, 4, 0)
         gl.setColumnStretch(0, 0)
         gl.setColumnStretch(1, 1)
         gl.setColumnStretch(2, 0)
