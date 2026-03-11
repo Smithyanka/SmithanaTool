@@ -76,24 +76,24 @@ class SharedLogPanel(QWidget):
     def _color_for(self, s: str) -> str:
         if s.startswith("[ERROR]") or s.startswith("[CANCEL]"):
             return "#d22"
-        if s.startswith("[WARN]"):
+        if s.startswith("[WARN]") or s.startswith("[STOP]"):
             return "#e8a400"
         if s.startswith("[ASK]"):
             return "#a0a"
-        if s.startswith("[STOP]"):
-            return "#777"
         if s.startswith("[DONE]"):
             return "#06c"
         if s.startswith("[LOGIN]"):
             return "#c60"
-        if s.startswith("[INFO]") or s.startswith("[OK]"):
+        if s.startswith("[OK]") or s.startswith("[SAVE]"):
             return "#0a0"
         if s.startswith("[AUTO]"):
             return "#08c"
-        if s.startswith("[DEBUG]") or s.startswith("[SKIP]"):
+        if s.startswith("[DEBUG]") or s.startswith("[INFO]") or s.startswith("[SKIP]"):
             return "#888"
         if s.startswith("[Загрузка]"):
             return "#fa0"
+        if s.startswith('[OPEN'):
+            return '#7c3aed'
         return "#888"
 
     def _log(self, message: str) -> None:

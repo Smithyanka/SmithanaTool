@@ -12,7 +12,11 @@ from .dom import _collect_dom_urls
 from .stitch import _auto_stitch_chapter
 from .utils import _viewer_url, ensure_dir
 from smithanatool_qt.tabs.parsers.kakao.shared.episodes.specs import _safe_list_all, parse_chapter_spec, parse_index_spec
-from smithanatool_qt.tabs.parsers.kakao.shared.runner.bootstrap import load_episode_rows, prepare_series_runtime
+from smithanatool_qt.tabs.parsers.kakao.shared.runner.bootstrap import (
+    KakaoSeriesRuntime,
+    load_episode_rows,
+    prepare_series_runtime,
+)
 from smithanatool_qt.tabs.parsers.kakao.shared.tickets.runtime import ensure_product_access
 
 
@@ -34,7 +38,6 @@ def _resolve_targets(
         pid_s = str(pid)
         num_to_id.setdefault(ep_no, pid_s)
         id_to_num.setdefault(pid_s, ep_no)
-    log(f"[OK] Получен список эпизодов: nums={len(num_to_id)}, ids={len(id_to_num)}")
 
     targets: List[str] = []
     if chapters:
@@ -94,18 +97,25 @@ def run_parser(
     auth_only: bool = False,
     on_after_auth: Optional[Callable[[str], None]] = None,
     wait_continue: Optional[Callable[[], bool]] = None,
+    runtime: Optional[KakaoSeriesRuntime] = None,
 ) -> None:
     log = on_log or (lambda s: None)
-    runtime = prepare_series_runtime(
-        title_id=title_id,
-        out_dir=out_dir,
-        on_log=log,
-        on_need_login=on_need_login,
-        stop_flag=stop_flag,
-        wait_continue=wait_continue,
-        auth_only=auth_only,
-        on_after_auth=on_after_auth,
-    )
+
+    if runtime is None:
+        runtime = prepare_series_runtime(
+            title_id=title_id,
+            out_dir=out_dir,
+            on_log=log,
+            on_need_login=on_need_login,
+            stop_flag=stop_flag,
+            wait_continue=wait_continue,
+            auth_only=auth_only,
+            on_after_auth=on_after_auth,
+        )
+    else:
+        if auth_only:
+            return
+
     if auth_only:
         return
 
@@ -180,7 +190,7 @@ def run_parser(
                 raise RuntimeError('[CANCEL] Остановлено пользователем.')
 
             url = _viewer_url(sid, pid)
-            log(f'[Ep {i:03d}] {url}')
+            log(f'[OPEN] {url}')
 
             ep_no = id_to_num.get(str(pid))
             label = f'{ep_no:03d}' if isinstance(ep_no, int) else f'id_{pid}'

@@ -54,7 +54,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._normal_geom = None
 
-        self.setWindowTitle("SmithanaTool v1.1.1 ")
+        self.setWindowTitle("SmithanaTool v1.1.1f ")
 
         # В приложении остаётся только системная шапка (native title bar).
         self.setWindowFlag(Qt.WindowMinimizeButtonHint, True)

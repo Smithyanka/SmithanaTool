@@ -222,7 +222,7 @@ def ensure_product_access(
     selected = next((a for a in actions if isinstance(a, dict) and a.get('key') == chosen), None)
 
     if not selected:
-        _log('[SKIP] Пользователь пропустил главу.')
+        _log('[SKIP] Пропуск главы.')
         return False, info
 
     kind = str(selected.get('kind') or '').strip()

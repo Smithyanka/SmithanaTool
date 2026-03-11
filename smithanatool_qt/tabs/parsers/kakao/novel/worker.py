@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from typing import Iterable, Optional
 
 from smithanatool_qt.tabs.parsers.common.parser_defaults import default_thread_count
-from smithanatool_qt.tabs.parsers.kakao.novel.platform.runner import (
-    list_novel_products_for_picker,
-    run_novel_parser,
-)
+from smithanatool_qt.tabs.parsers.kakao.novel.platform.runner import run_novel_parser
+from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_graphql import picker_rows_from_episode_map
+from smithanatool_qt.tabs.parsers.kakao.shared.runner.bootstrap import load_episode_rows, prepare_series_runtime
 from smithanatool_qt.tabs.parsers.kakao.shared.worker.base import BaseInteractiveParserWorker
 
 
@@ -33,6 +32,7 @@ class NovelParserWorker(BaseInteractiveParserWorker):
     def run(self) -> None:
         try:
             chapters: Optional[Iterable[str]] = None
+            runtime = None
 
             if self.cfg.mode == 'id':
                 chapters = [s.strip() for s in (self.cfg.spec_text or '').split(',') if s.strip()]
@@ -42,7 +42,7 @@ class NovelParserWorker(BaseInteractiveParserWorker):
                 except Exception:
                     raise RuntimeError('ID тайтла должен быть числовым series_id.')
 
-                rows = list_novel_products_for_picker(
+                runtime = prepare_series_runtime(
                     title_id=self.cfg.title_id,
                     out_dir=self.cfg.out_dir,
                     on_log=self._on_log,
@@ -50,11 +50,23 @@ class NovelParserWorker(BaseInteractiveParserWorker):
                     stop_flag=self._stop_flag,
                     wait_continue=self._wait_continue,
                 )
+
+                episode_map_rows, _epmap_path, _created_now = load_episode_rows(
+                    runtime,
+                    on_log=self._on_log,
+                    stop_flag=self._stop_flag,
+                    sort='desc',
+                    retries=2,
+                    use_cache_map=True,
+                    fallback_to_cache=True,
+                )
+
                 if self._stop_event.is_set():
                     return
-                if not rows:
+                if not episode_map_rows:
                     raise RuntimeError('Не удалось получить список глав для выбора.')
 
+                rows = picker_rows_from_episode_map(episode_map_rows)
                 chapters = self._request_ui_selected_ids(sid, rows)
                 if chapters is None:
                     return
@@ -73,6 +85,7 @@ class NovelParserWorker(BaseInteractiveParserWorker):
                 threads=int(self.cfg.threads),
                 on_choose_ticket_action=self._confirm_ticket_action,
                 delete_cache_after=bool(self.cfg.delete_cache_after),
+                runtime=runtime,
             )
         except Exception as err:
             self._emit_exception(err)

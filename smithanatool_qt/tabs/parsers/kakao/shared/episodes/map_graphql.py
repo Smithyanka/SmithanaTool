@@ -49,15 +49,13 @@ def safe_list_all(series_id: int, sort: str, cookie_raw: Optional[str], log: Opt
         if stop_flag and stop_flag():
             return []
         try:
-            client = KakaoPageApi(cookie_raw=cookie_raw)
+            client = KakaoPageApi(cookie_raw=cookie_raw, log=log)
             rows = [
                 normalized
                 for edge in client.list_episodes(series_id=int(series_id), sort=sort, page_size=200)
                 for normalized in [normalize_episode_row(edge)]
                 if normalized is not None
             ]
-            if log:
-                log(f"[DEBUG] GraphQL получил эпизодов: {len(rows)} (sort='{sort}')")
             return rows
         except Exception as e:
             last_err = e

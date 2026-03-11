@@ -52,7 +52,7 @@ class NovelTabRunMixin(TicketDecisionRunMixin, CommonParserRunMixin):
         worker = getattr(self, '_worker', None)
         if self._had_error or (worker and getattr(worker, '_saw_done_log', False)):
             return
-        self._log('[DONE] Готово.')
+        self._log('[DONE] Парсер завершил работу.')
 
     def _set_specific_running_state(self, running: bool) -> None:
         if not running:

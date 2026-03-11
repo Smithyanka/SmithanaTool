@@ -132,13 +132,13 @@ class KakaoPageApi:
         return data if isinstance(data, dict) else {}
 
     def list_episodes(self, series_id: int, sort: str = 'desc', page_size: int = 200):
-        del sort  # новый REST-эндпоинт в HAR использует cursor_index/cursor_direction, а не sortType
+        del sort  # REST-эндпоинт использует cursor_index/cursor_direction
 
-        cursor_index = 0
-        cursor_direction = 'ANCHOR'
+        collected: list[tuple[int, dict]] = []
         seen_product_ids: set[int] = set()
+        visited_pages: set[tuple[str, int]] = set()
 
-        while True:
+        def fetch(cursor_index: int, cursor_direction: str):
             data = self.request_json(
                 'GET',
                 CONTENT_PRODUCT_LIST_URL,
@@ -150,14 +150,23 @@ class KakaoPageApi:
                 },
                 timeout=15,
             )
-
             result = self._unwrap_rest_result(data, op='content/product/list')
             rows = result.get('list') or []
-            if not isinstance(rows, list) or not rows:
-                break
+            if not isinstance(rows, list):
+                rows = []
 
-            yielded_any = False
+            self.log(
+                f"[EP-LIST] dir={cursor_direction} cursor={cursor_index} "
+                f"got={len(rows) if isinstance(rows, list) else 0} "
+                f"has_prev={bool(result.get('has_prev'))} "
+                f"has_next={bool(result.get('has_next'))} "
+                f"total_count={result.get('total_count')} "
+                f"unique={len(seen_product_ids)}"
+            )
 
+            return result, rows
+
+        def collect_rows(rows: list[dict]) -> None:
             for row in rows:
                 if not isinstance(row, dict):
                     continue
@@ -172,16 +181,18 @@ class KakaoPageApi:
                 except Exception:
                     continue
 
-                if product_id_int in seen_product_ids:
-                    continue
-                seen_product_ids.add(product_id_int)
-
                 operator_property = item.get('operator_property') or {}
                 service_property = item.get('service_property') or {}
                 last_view = service_property.get('last_view') or {}
 
+                cursor_raw = row.get('cursor_index')
+                try:
+                    cursor_int = int(cursor_raw)
+                except Exception:
+                    cursor_int = 10 ** 12 + len(collected)
+
                 edge = {
-                    'cursor': str(row.get('cursor_index') or ''),
+                    'cursor': str(cursor_raw or ''),
                     'node': {
                         'row1': item.get('title') or '',
                         'scheme': None,
@@ -197,27 +208,62 @@ class KakaoPageApi:
                         'isViewed': bool(last_view),
                     },
                 }
+                collected.append((cursor_int, edge))
 
-                yield edge
-                yielded_any = True
+        # 1) anchor
+        anchor_result, anchor_rows = fetch(0, 'ANCHOR')
+        if not anchor_rows:
+            return
 
-            if not yielded_any:
-                break
+        collect_rows(anchor_rows)
 
-            if not result.get('has_next'):
-                break
-
-            last_row = rows[-1] if rows else {}
-            next_cursor = last_row.get('cursor_index')
-            if next_cursor is None:
-                break
-
+        # 2) идём в PREV от первой строки anchor
+        result = anchor_result
+        rows = anchor_rows
+        while result.get('has_prev') and rows:
+            first_cursor = rows[0].get('cursor_index')
             try:
-                cursor_index = int(next_cursor)
+                first_cursor = int(first_cursor)
             except Exception:
                 break
 
-            cursor_direction = 'NEXT'
+            page_key = ('PREV', first_cursor)
+            if page_key in visited_pages:
+                break
+            visited_pages.add(page_key)
+
+            result, rows = fetch(first_cursor, 'PREV')
+            if not rows:
+                break
+            collect_rows(rows)
+
+        # 3) идём в NEXT от последней строки anchor
+        result = anchor_result
+        rows = anchor_rows
+        while result.get('has_next') and rows:
+            last_cursor = rows[-1].get('cursor_index')
+            try:
+                last_cursor = int(last_cursor)
+            except Exception:
+                break
+
+            page_key = ('NEXT', last_cursor)
+            if page_key in visited_pages:
+                break
+            visited_pages.add(page_key)
+
+            result, rows = fetch(last_cursor, 'NEXT')
+            if not rows:
+                break
+            collect_rows(rows)
+
+        # 4) сортируем по cursor_index и убираем дубли по productId
+        for _, edge in sorted(collected, key=lambda x: x[0]):
+            pid = edge['node']['single']['productId']
+            if pid in seen_product_ids:
+                continue
+            seen_product_ids.add(pid)
+            yield edge
 
     def ready_to_use_ticket(self, series_id: int, product_id: int) -> dict:
         del series_id

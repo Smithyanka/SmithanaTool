@@ -10,7 +10,11 @@ from typing import Callable, Iterable, Optional
 
 from smithanatool_qt.tabs.parsers.kakao.shared.api.graphql import KakaoPageApi
 from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_graphql import picker_rows_from_episode_map
-from smithanatool_qt.tabs.parsers.kakao.shared.runner.bootstrap import load_episode_rows, prepare_series_runtime
+from smithanatool_qt.tabs.parsers.kakao.shared.runner.bootstrap import (
+    KakaoSeriesRuntime,
+    load_episode_rows,
+    prepare_series_runtime,
+)
 from smithanatool_qt.tabs.parsers.kakao.shared.tickets.runtime import ensure_product_access
 from smithanatool_qt.tabs.parsers.kakao.shared.utils.kakao_common import (
     compute_workers,
@@ -150,7 +154,7 @@ def _fetch_parts_parallel(
         return []
 
     workers = min(len(parts), compute_workers(auto_threads, threads))
-    log(f'[INFO] Загрузка частей текста в {workers} поток(ов).')
+    log(f'[INFO] Потоков: {workers}')
 
     if workers <= 1:
         results = []
@@ -232,7 +236,7 @@ def _fetch_one_product_text(
             meta_url = _build_resource_url(ats_server_url, meta_secure_url)
             meta_payload = api.fetch_json(meta_url)
             _save_json(product_cache_dir / 'meta.json', meta_payload)
-            log(f'[OK] Meta получена: pid={product_id}')
+            log(f'[OK] productId={product_id}')
         except Exception as e:
             log(f'[WARN] Не удалось скачать meta для pid={product_id}: {e}')
 
@@ -245,7 +249,7 @@ def _fetch_one_product_text(
         api=api,
         parts=parts,
         ats_server_url=ats_server_url,
-        log=lambda s: log(f'[OK] pid={product_id} {s[5:]}' if s.startswith('[OK] ') else s),
+        log=lambda s: log(f'[OK] productId={product_id} {s[5:]}' if s.startswith('[OK] ') else s),
         stop_flag=stop_flag,
         auto_threads=auto_threads,
         threads=threads,
@@ -265,7 +269,7 @@ def _fetch_one_product_text(
     if not final_text:
         raise RuntimeError(f'product_id={product_id}: итоговый текст пуст')
 
-    out_path = series_dir / f'{safe_title} [pid {product_id}].txt'
+    out_path = series_dir / f'{safe_title}.txt'
     out_path.write_text(final_text, encoding='utf-8-sig')
     log(f'[SAVE] Сохранено: {out_path}')
     return out_path
@@ -317,30 +321,23 @@ def run_novel_parser(
     threads: int = 4,
     on_choose_ticket_action: Optional[Callable[[dict], str]] = None,
     delete_cache_after: bool = True,
+    runtime: Optional[KakaoSeriesRuntime] = None,
 ) -> None:
     log = on_log or (lambda s: None)
-    runtime = prepare_series_runtime(
-        title_id=title_id,
-        out_dir=out_dir,
-        on_log=log,
-        on_need_login=on_need_login,
-        stop_flag=stop_flag,
-        wait_continue=wait_continue,
-    )
+
+    if runtime is None:
+        runtime = prepare_series_runtime(
+            title_id=title_id,
+            out_dir=out_dir,
+            on_log=log,
+            on_need_login=on_need_login,
+            stop_flag=stop_flag,
+            wait_continue=wait_continue,
+        )
 
     product_ids = _normalize_product_ids(chapters)
     if not product_ids:
         raise RuntimeError('Не переданы product_id для скачивания.')
-
-    _episode_rows, _epmap_path, _epmap_created_now = load_episode_rows(
-        runtime,
-        on_log=log,
-        stop_flag=stop_flag,
-        sort='desc',
-        retries=2,
-        use_cache_map=True,
-        fallback_to_cache=True,
-    )
 
     log(f'[INFO] series_id={runtime.series_id}')
     log(f'[INFO] product_ids={product_ids}')
@@ -354,7 +351,7 @@ def run_novel_parser(
                 raise RuntimeError('[CANCEL] Остановлено пользователем.')
 
             url = f'https://page.kakao.com/viewer?product_id={product_id}&series_id={runtime.series_id}'
-            log(f'[Ep {idx:03d}] {url}')
+            log(f'[OPEN] {url}')
             access_ok, _ = ensure_product_access(
                 api=runtime.api,
                 series_id=runtime.series_id,

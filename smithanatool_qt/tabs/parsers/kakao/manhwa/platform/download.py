@@ -123,8 +123,8 @@ def _download_images_from_list(
                 ok, fn = False, "<?>"
             if ok:
                 saved += 1
-                if log: log(f"[IMG] Загрузка → {fn}")
+                if log: log(f"[SAVE] {fn}")
             else:
                 if log: log(f"[WARN] Не скачано: {fn}")
-    if log: log(f"[OK] DOM: докачано {saved} (из {len(jobs)}), потоки={max_workers}")
+    if log: log(f"[OK] Сохранено: {saved} (из {len(jobs)}), потоки={max_workers}")
     return saved

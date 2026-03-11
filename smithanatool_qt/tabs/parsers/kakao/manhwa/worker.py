@@ -11,6 +11,7 @@ from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_graphql import (
 )
 from smithanatool_qt.tabs.parsers.kakao.shared.worker.base import BaseInteractiveParserWorker
 
+from smithanatool_qt.tabs.parsers.kakao.shared.runner.bootstrap import prepare_series_runtime
 
 @dataclass
 class ManhwaParserConfig:
@@ -43,13 +44,6 @@ class ManhwaParserConfig:
 
 
 class ManhwaParserWorker(BaseInteractiveParserWorker):
-    def __init__(self, cfg: ManhwaParserConfig):
-        super().__init__(cfg)
-        self._cookie_raw_cached: Optional[str] = None
-
-    def _catch_cookie_after_auth(self, cookie: str) -> None:
-        self._cookie_raw_cached = str(cookie or '')
-
     def _build_auto_concat(self) -> Optional[dict]:
         if not self.cfg.auto_enabled:
             return None
@@ -80,6 +74,7 @@ class ManhwaParserWorker(BaseInteractiveParserWorker):
             chapters: Optional[Iterable[str]] = None
             by_index: Optional[int] = None
             by_index_spec: Optional[str] = None
+            runtime = None
 
             if mode == 'number':
                 chapter_spec = spec
@@ -95,53 +90,49 @@ class ManhwaParserWorker(BaseInteractiveParserWorker):
                         self.error.emit("Индекс должен быть числом или диапазоном (например, '1,2' или '7-10').")
                         return
             elif mode == 'ui':
-                try:
-                    sid = int(title_id)
-                except Exception:
-                    self.error.emit('ID тайтла должен быть числом.')
-                    return
+                        try:
+                            sid = int(title_id)
+                        except Exception:
+                            self.error.emit('ID тайтла должен быть числом.')
+                            return
 
-                self._cookie_raw_cached = None
-                run_parser(
-                    title_id=title_id,
-                    out_dir=self.cfg.out_dir,
-                    on_log=self._on_log,
-                    on_need_login=self._on_need_login,
-                    stop_flag=self._stop_flag,
-                    auth_only=True,
-                    on_after_auth=self._catch_cookie_after_auth,
-                    wait_continue=self._wait_continue,
-                )
-                self._browser_closed_seen = False
-                if self._stop_event.is_set():
-                    return
-                if not self._cookie_raw_cached:
-                    self.error.emit('Не удалось получить сессию после авторизации.')
-                    return
+                        runtime = prepare_series_runtime(
+                            title_id=title_id,
+                            out_dir=self.cfg.out_dir,
+                            on_log=self._on_log,
+                            on_need_login=self._on_need_login,
+                            stop_flag=self._stop_flag,
+                            wait_continue=self._wait_continue,
+                        )
+                        self._browser_closed_seen = False
 
-                episode_map_rows = refresh_episode_map(
-                    sid,
-                    self.cfg.out_dir,
-                    self._cookie_raw_cached,
-                    log=self._on_log,
-                    stop_flag=self._stop_flag,
-                    sort='desc',
-                    retries=2,
-                    fallback_to_cache=True,
-                ) or []
-                if self._stop_event.is_set():
-                    return
-                if not episode_map_rows:
-                    self.error.emit('Не удалось получить список эпизодов.')
-                    return
+                        if self._stop_event.is_set():
+                            return
 
-                rows = picker_rows_from_episode_map(episode_map_rows)
-                chapters = self._request_ui_selected_ids(sid, rows)
-                if chapters is None:
-                    return
-                if not chapters:
-                    self.error.emit('Ничего не выбрано.')
-                    return
+                        episode_map_rows = refresh_episode_map(
+                            sid,
+                            self.cfg.out_dir,
+                            runtime.cookie_raw,
+                            log=self._on_log,
+                            stop_flag=self._stop_flag,
+                            sort='desc',
+                            retries=2,
+                            fallback_to_cache=True,
+                        ) or []
+
+                        if self._stop_event.is_set():
+                            return
+                        if not episode_map_rows:
+                            self.error.emit('Не удалось получить список эпизодов.')
+                            return
+
+                        rows = picker_rows_from_episode_map(episode_map_rows)
+                        chapters = self._request_ui_selected_ids(sid, rows)
+                        if chapters is None:
+                            return
+                        if not chapters:
+                            self.error.emit('Ничего не выбрано.')
+                            return
             else:
                 self.error.emit('Неизвестный режим.')
                 return
@@ -163,6 +154,7 @@ class ManhwaParserWorker(BaseInteractiveParserWorker):
                 by_index=by_index,
                 by_index_spec=by_index_spec,
                 wait_continue=self._wait_continue,
+                runtime=runtime,
             )
         except Exception as err:
             self._emit_exception(err)
