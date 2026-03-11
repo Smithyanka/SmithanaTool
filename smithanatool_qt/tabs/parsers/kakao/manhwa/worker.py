@@ -5,7 +5,7 @@ from typing import Iterable, Optional
 
 from smithanatool_qt.tabs.parsers.common.parser_defaults import default_thread_count
 from smithanatool_qt.tabs.parsers.kakao.manhwa.platform.runner import run_parser
-from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_graphql import (
+from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_content import (
     picker_rows_from_episode_map,
     refresh_episode_map,
 )

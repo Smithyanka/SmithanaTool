@@ -90,6 +90,9 @@ def _download_images_from_list(
 
     saved, max_workers = 0, _compute_workers(auto_threads, threads)
 
+    if log:
+        log(f"[INFO] Количество потоков: {max_workers}")
+
     def _task(idx: int, url: str, fn: str) -> tuple[int, bool, str]:
         if stop_flag and stop_flag(): return (idx, False, fn)
         out_path = str(Path(dest_dir) / fn)
@@ -126,5 +129,5 @@ def _download_images_from_list(
                 if log: log(f"[SAVE] {fn}")
             else:
                 if log: log(f"[WARN] Не скачано: {fn}")
-    if log: log(f"[OK] Сохранено: {saved} (из {len(jobs)}), потоки={max_workers}")
+    if log: log(f"[OK] Сохранено: {saved} (из {len(jobs)})")
     return saved

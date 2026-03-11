@@ -8,8 +8,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from smithanatool_qt.tabs.parsers.kakao.shared.api.graphql import KakaoPageApi
-from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_graphql import picker_rows_from_episode_map
+from smithanatool_qt.tabs.parsers.kakao.shared.api.kakao_api import KakaoPageApi
+from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_content import picker_rows_from_episode_map
 from smithanatool_qt.tabs.parsers.kakao.shared.runner.bootstrap import (
     KakaoSeriesRuntime,
     load_episode_rows,
@@ -154,7 +154,7 @@ def _fetch_parts_parallel(
         return []
 
     workers = min(len(parts), compute_workers(auto_threads, threads))
-    log(f'[INFO] Потоков: {workers}')
+    log(f'[INFO] Количество потоков: {workers}')
 
     if workers <= 1:
         results = []

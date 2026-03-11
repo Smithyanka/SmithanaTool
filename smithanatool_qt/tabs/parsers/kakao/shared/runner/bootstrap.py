@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from smithanatool_qt.tabs.parsers.kakao.shared.api.graphql import KakaoPageApi
+from smithanatool_qt.tabs.parsers.kakao.shared.api.kakao_api import KakaoPageApi
 from smithanatool_qt.tabs.parsers.kakao.shared.auth.auth import _load_cookie_raw_from_session
-from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_graphql import episode_map_path, refresh_episode_map, safe_list_all
+from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_content import episode_map_path, refresh_episode_map, safe_list_all
 from smithanatool_qt.tabs.parsers.kakao.shared.utils.kakao_common import ensure_dir
 
 

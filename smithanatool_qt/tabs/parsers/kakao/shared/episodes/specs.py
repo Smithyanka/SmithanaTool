@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_graphql import (
+from smithanatool_qt.tabs.parsers.kakao.shared.episodes.map_content import (
     safe_list_all as _common_safe_list_all,
 )
 

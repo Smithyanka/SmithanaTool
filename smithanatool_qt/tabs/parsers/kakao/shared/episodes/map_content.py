@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-from smithanatool_qt.tabs.parsers.kakao.shared.api.graphql import KakaoPageApi
+from smithanatool_qt.tabs.parsers.kakao.shared.api.kakao_api import KakaoPageApi
 from smithanatool_qt.tabs.parsers.kakao.shared.utils.kakao_common import ensure_dir
 
 
