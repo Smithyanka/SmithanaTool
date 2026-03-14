@@ -4,7 +4,7 @@ from typing import Optional, Tuple, Callable
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QObject, QEvent
 from PySide6.QtGui import QImage, Qt
-from PySide6.QtWidgets import QPushButton, QApplication
+from PySide6.QtWidgets import QApplication
 
 from smithanatool_qt.tabs.ai.ui.widgets.selection_overlay import SelectionOverlay
 
@@ -46,7 +46,6 @@ class AiViewerController:
     Управляет PreviewPanel и SelectionOverlay для вкладки Ai:
     - прячет лишние кнопки PreviewPanel
     - создаёт overlay для прямоугольников
-    - создаёт кнопку "Удалить выделения" поверх preview (справа сверху)
     - даёт методы: rects/set_rects/labels, crop, QImage->bytes
     """
 
@@ -72,25 +71,16 @@ class AiViewerController:
         QApplication.instance().installEventFilter(self._space_filter)
         self._set_pan_mode(False)
 
-        # Button anchored to preview widget (not image label)
-        self.btn_clear_rects = QPushButton("Удалить фрагменты", self.preview)
-        self.btn_clear_rects.setAutoDefault(False)
-        self.btn_clear_rects.setToolTip("Удаляет рамки выделения. Тексты справа не удаляются.")
-        self.btn_clear_rects.clicked.connect(self._on_clear_clicked)
-        self.btn_clear_rects.show()
-        self.btn_clear_rects.raise_()
-
-        # Event filter: resize preview => reposition button; resize label => resize overlay
+        # Event filter: resize label => подогнать overlay
         self._filter = _ViewerEventFilter(
             mid=self.preview,
             label=self.preview.label,
-            on_mid_resize=self._position_clear_button,
+            on_mid_resize=lambda: None,
             on_label_resize=self._sync_overlay_geometry,
         )
         self.preview.installEventFilter(self._filter)
         self.preview.label.installEventFilter(self._filter)
 
-        self._position_clear_button()
         self._sync_overlay_geometry()
 
     def _set_pan_mode(self, enabled: bool):
@@ -141,34 +131,6 @@ class AiViewerController:
             self.overlay.raise_()
         except Exception:
             pass
-        try:
-            self.btn_clear_rects.raise_()
-        except Exception:
-            pass
-
-    def _position_clear_button(self):
-        try:
-            margin_top = 10
-            margin_right = 14
-            self.btn_clear_rects.adjustSize()
-            x = self.preview.width() - self.btn_clear_rects.width() - margin_right
-            y = margin_top
-            if x < 0:
-                x = 0
-            self.btn_clear_rects.move(x, y)
-        except Exception:
-            pass
-
-    def _on_clear_clicked(self):
-        # Delegate to EntriesController via tab (it will detach rects without deleting texts)
-        try:
-            self.tab.entries.clear_rectangles()
-        except Exception:
-            # fallback: clear overlay only
-            try:
-                self.overlay.clear()
-            except Exception:
-                pass
 
     # ---- Public helpers ----
     def show_path(self, path: Optional[str]):

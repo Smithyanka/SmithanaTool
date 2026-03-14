@@ -48,3 +48,15 @@ class RightPanelIniMixin:
                 return get_value(key, default, typ=typ)
         except Exception:
             return default
+
+    def _get_save_text_dir(self) -> str:
+        return str(self._get_ini("save_text_dir", "", typ=str) or "")
+
+    def _set_save_text_dir(self, path: str) -> None:
+        self._save_ini("save_text_dir", str(path or ""))
+
+    def _get_save_all_text_dir(self) -> str:
+        return str(self._get_ini("save_all_text_dir", "", typ=str) or "")
+
+    def _set_save_all_text_dir(self, path: str) -> None:
+        self._save_ini("save_all_text_dir", str(path or ""))

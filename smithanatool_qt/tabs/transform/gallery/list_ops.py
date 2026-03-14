@@ -2,7 +2,6 @@ from __future__ import annotations
 from typing import Optional
 from PySide6.QtCore import Qt
 
-# Набор операций над списком вынесен сюда, чтобы разгрузить GalleryPanel
 def sync_files_from_list(panel) -> None:
     lst = panel.ui.list
     panel._files = [lst.item(i).data(Qt.UserRole) for i in range(lst.count())]
@@ -15,6 +14,10 @@ def delete_selected(panel, *, confirm: Optional[bool] = True) -> None:
     if not rows:
         return
 
+    cur_idx = lst.currentRow()
+    cur_item = lst.item(cur_idx) if 0 <= cur_idx < lst.count() else None
+    cur_path = cur_item.data(Qt.UserRole) if cur_item else None
+
     if confirm is None:
         confirm = any((0 <= r < len(panel._files)) and panel._is_dirty(panel._files[r]) for r in rows)
     if confirm and not panel._confirm_delete_selected(len(rows)):
@@ -26,8 +29,19 @@ def delete_selected(panel, *, confirm: Optional[bool] = True) -> None:
             removed_paths.append(panel._files[r])
             panel._files.pop(r)
             lst.takeItem(r)
+
     for p in removed_paths:
         panel._added_order.pop(p, None)
+
+    # Какой файл должен стать текущим после удаления
+    next_path = None
+    if panel._files:
+        if cur_path and cur_path not in removed_paths and cur_path in panel._files:
+            next_path = cur_path
+        else:
+            next_row = min(rows)
+            next_row = max(0, min(next_row, len(panel._files) - 1))
+            next_path = panel._files[next_row]
 
     try:
         from ..preview.utils import unregister_memory_images
@@ -42,6 +56,20 @@ def delete_selected(panel, *, confirm: Optional[bool] = True) -> None:
             pass
 
     sync_files_from_list(panel)
+
+    # Явно восстанавливаем текущий элемент и при необходимости вручную шлём сигнал
+    if next_path and next_path in panel._files:
+        prev_row = lst.currentRow()
+        panel._focus_path(next_path)
+
+        try:
+            target_row = panel._files.index(next_path)
+            if prev_row == target_row:
+                panel.currentPathChanged.emit(next_path)
+        except Exception:
+            pass
+    else:
+        panel.currentPathChanged.emit(None)
 
 def clear_all(panel) -> None:
     if not panel._files:

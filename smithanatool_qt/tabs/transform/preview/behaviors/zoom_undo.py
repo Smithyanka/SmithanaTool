@@ -98,6 +98,20 @@ class UndoMixin:
         for n in ("action_btn_frame", "btn_frame"):
             self._set_enabled(n, frame_ok)
 
+        ocr_sort_ok = has_img
+        ocr_delete_ok = has_img and bool(getattr(self, "_ocr_delete_available", False))
+        ocr_undo_ok = has_img and bool(getattr(self, "_ocr_undo_available", False))
+        ocr_redo_ok = has_img and bool(getattr(self, "_ocr_redo_available", False))
+
+        for n in ("action_btn_ocr_sort",):
+            self._set_enabled(n, ocr_sort_ok)
+        for n in ("action_btn_ocr_delete",):
+            self._set_enabled(n, ocr_delete_ok)
+        for n in ("action_btn_ocr_undo", "action_btn_ocr_restore"):
+            self._set_enabled(n, ocr_undo_ok)
+        for n in ("action_btn_ocr_redo",):
+            self._set_enabled(n, ocr_redo_ok)
+
         # Keep the actions panel "pinned" globally (not per-file).
         handle = getattr(self, "btn_actions_handle", None)
         ap = getattr(self, "actions_panel", None)

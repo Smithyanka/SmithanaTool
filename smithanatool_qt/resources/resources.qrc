@@ -9,9 +9,11 @@
     <file alias="assets/icons/cut.svg">../assets/icons/cut.svg</file>
     <file alias="assets/icons/down.svg">../assets/icons/down.svg</file>
     <file alias="assets/icons/engine_edit.svg">../assets/icons/engine_edit.svg</file>
+    <file alias="assets/icons/folder.svg">../assets/icons/folder.svg</file>
     <file alias="assets/icons/frame.svg">../assets/icons/frame.svg</file>
     <file alias="assets/icons/free-icon-font-bars-filter-9851190.svg">../assets/icons/free-icon-font-bars-filter-9851190.svg</file>
     <file alias="assets/icons/free-icon-font-vision-target-17383978.svg">../assets/icons/free-icon-font-vision-target-17383978.svg</file>
+    <file alias="assets/icons/install.svg">../assets/icons/install.svg</file>
     <file alias="assets/icons/menu.svg">../assets/icons/menu.svg</file>
     <file alias="assets/icons/moon.svg">../assets/icons/moon.svg</file>
     <file alias="assets/icons/open_folder.svg">../assets/icons/open_folder.svg</file>
@@ -28,6 +30,7 @@
     <file alias="assets/icons/undo.svg">../assets/icons/undo.svg</file>
     <file alias="assets/icons/up.svg">../assets/icons/up.svg</file>
     <file alias="assets/icons/view_grid.svg">../assets/icons/view_grid.svg</file>
+    <file alias="assets/icons/view_grid2.svg">../assets/icons/view_grid2.svg</file>
     <file alias="assets/icons/view_list.svg">../assets/icons/view_list.svg</file>
     <file alias="assets/smithanatool.ico">../assets/smithanatool.ico</file>
     <file alias="styles/app.qss">../styles/app.qss</file>

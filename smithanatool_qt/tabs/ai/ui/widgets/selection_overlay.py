@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from PySide6.QtCore import Qt, QPoint, QRect, QSize, Signal
-from PySide6.QtGui import QPainter, QPen, QColor, QFont, QPainterPath
+from PySide6.QtCore import QPoint, QRect, Qt, Signal
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QWidget
+
+from .overlay_geometry import (
+    cross_rect_widget,
+    cursor_shape_for_mode,
+    hit_test_resize_zone_widget,
+    rect_from_drag,
+)
+from .overlay_paint import paint_overlay
 
 
 class SelectionOverlay(QWidget):
@@ -87,6 +95,8 @@ class SelectionOverlay(QWidget):
         self._rects_img.clear()
         self._labels.clear()
         self._selected_index = None
+        self._clear_drag_state()
+        self._clear_active_interaction()
         self.update()
 
     # ---- selection API ----
@@ -125,71 +135,18 @@ class SelectionOverlay(QWidget):
 
     # ---- рисование ----
     def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, True)
-
-        # текущая тянущаяся рамка (ПКМ)
-        if self._drag_start and self._drag_current:
-            r = QRect(self._drag_start, self._drag_current).normalized()
-            radius = min(2.0, r.width() / 2.0, r.height() / 2.0)
-            pen = QPen(QColor(142,53,253), 2, Qt.DashLine)
-            p.setPen(pen)
-            p.drawRoundedRect(r, radius, radius)
-
-        # существующие рамки + крестик + номер
-        font = QFont()
-        font.setPointSize(9)
-        p.setFont(font)
-
-        for i, r_img in enumerate(self._rects_img):
-            r_w = self._img_to_w(r_img)
-            radius = min(2.0, r_w.width() / 2.0, r_w.height() / 2.0)
-
-            path = QPainterPath()
-            path.addRoundedRect(float(r_w.x()), float(r_w.y()), float(r_w.width()), float(r_w.height()), radius, radius)
-
-            # подпись/номер
-            # подпись/номер
-            label = self._labels[i] if i < len(self._labels) and self._labels[i] else str(i + 1)
-            label_rect = QRect(r_w.topLeft(), QSize(20, 14))
-            badge_radius = radius
-
-            # выбранная рамка: подсветка + синяя рамка
-            if self._selected_index is not None and i == self._selected_index:
-                p.fillPath(path, QColor(66, 165, 245, 40))
-                pen = QPen(QColor(35, 135, 213), 2)
-                label_color = QColor(35, 135, 213, 200)
-            else:
-                pen = QPen(QColor(142, 53, 253), 2)
-                p.fillPath(path, QColor(227, 204, 255, 40))
-                label_color = QColor(142, 53, 253, 200)
-
-            p.setPen(Qt.NoPen)
-            p.setBrush(label_color)
-            p.drawRoundedRect(label_rect, badge_radius, badge_radius)
-
-            p.setPen(QPen(QColor(255, 255, 255)))
-            p.drawText(label_rect, Qt.AlignCenter, label)
-
-            p.setPen(pen)
-            p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(r_w, radius, radius)
-
-            # крестик для удаления
-            cross_rect = self._cross_rect_widget(r_img)
-            cross_radius = radius
-
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(255, 82, 82, 200))
-            p.drawRoundedRect(cross_rect, cross_radius, cross_radius)
-
-            p.setPen(QPen(QColor(255, 255, 255), 2))
-            x1 = cross_rect.topLeft() + QPoint(3, 3)
-            x2 = cross_rect.bottomRight() - QPoint(3, 3)
-            x3 = cross_rect.topRight() + QPoint(-3, 3)
-            x4 = cross_rect.bottomLeft() + QPoint(3, -3)
-            p.drawLine(x1, x2)
-            p.drawLine(x3, x4)
+        painter = QPainter(self)
+        paint_overlay(
+            widget=self,
+            painter=painter,
+            rects_img=self._rects_img,
+            labels=self._labels,
+            selected_index=self._selected_index,
+            drag_start=self._drag_start,
+            drag_current=self._drag_current,
+            img_to_w=self._img_to_w,
+            cross_size=self._cross_size,
+        )
 
     # ---- взаимодействие ----
     def mousePressEvent(self, ev):
@@ -197,62 +154,13 @@ class SelectionOverlay(QWidget):
 
         # 1) ЛКМ: сначала пытаемся работать с существующими рамками
         if ev.button() == Qt.MouseButton.LeftButton:
-            # удаление по клику в крестик
-            for idx, r_img in enumerate(self._rects_img):
-                if self._cross_rect_widget(r_img).contains(pt):
-                    rect_deleted = self._rects_img[idx]
-                    del self._rects_img[idx]
-                    if idx < len(self._labels):
-                        del self._labels[idx]
+            if self._try_delete_rect(pt, ev):
+                return
 
-                    # поддержка selection при удалении
-                    if self._selected_index is not None:
-                        if idx == self._selected_index:
-                            self._selected_index = None
-                            self.selectionCleared.emit()
-                        elif idx < self._selected_index:
-                            self._selected_index -= 1
+            self._clear_active_interaction()
 
-                    self.unsetCursor()
-                    self.update()
-                    self.rectDeleted.emit(idx, rect_deleted)
-                    ev.accept()
-                    return
-
-            # сброс активного состояния
-            self._active_index = None
-            self._active_mode = None
-            self._active_start = None
-            self._active_orig_rect_w = None
-            self._active_orig_rect_img = None
-
-            # выбор рамки для move/resize (с конца)
-            for idx in reversed(range(len(self._rects_img))):
-                r_img = self._rects_img[idx]
-                r_w = self._img_to_w(r_img)
-
-                resize_mode = self._hit_test_resize_zone_widget(r_img, pt)
-                if resize_mode is not None:
-                    self._user_select(idx)
-                    self._active_index = idx
-                    self._active_mode = resize_mode
-                    self._active_start = pt
-                    self._active_orig_rect_w = QRect(r_w)
-                    self._active_orig_rect_img = QRect(r_img)
-                    self._set_cursor_for_mode(resize_mode)
-                    ev.accept()
-                    return
-
-                if r_w.contains(pt):
-                    self._user_select(idx)
-                    self._active_index = idx
-                    self._active_mode = "move"
-                    self._active_start = pt
-                    self._active_orig_rect_w = QRect(r_w)
-                    self._active_orig_rect_img = QRect(r_img)
-                    self.setCursor(Qt.SizeAllCursor)
-                    ev.accept()
-                    return
+            if self._try_start_interaction(pt, ev):
+                return
 
             # клик мимо рамок
             self._user_select(None)
@@ -260,8 +168,7 @@ class SelectionOverlay(QWidget):
 
             # если ЛКМ назначена кнопкой создания — начинаем создание рамки
             if self._create_button == Qt.MouseButton.LeftButton:
-                self._drag_start = pt
-                self._drag_current = pt
+                self._start_drag(pt)
                 self.update()
                 ev.accept()
                 return
@@ -273,8 +180,7 @@ class SelectionOverlay(QWidget):
         if ev.button() == self._create_button:
             self._user_select(None)  # чтобы список тоже снял выделение
             self.unsetCursor()
-            self._drag_start = pt
-            self._drag_current = pt
+            self._start_drag(pt)
             self.update()
             ev.accept()
             return
@@ -286,34 +192,9 @@ class SelectionOverlay(QWidget):
 
         # перетаскивание/ресайз существующей рамки (ЛКМ)
         if self._active_mode and (ev.buttons() & Qt.LeftButton) and self._active_index is not None:
-            if self._active_orig_rect_w is None:
+            if self._active_orig_rect_w is None or self._active_start is None:
                 return
-            orig_w = self._active_orig_rect_w
-            if self._active_mode == "move":
-                delta = pt - self._active_start
-                new_rect_w = orig_w.translated(delta)
-            else:
-                new_rect_w = QRect(orig_w)
-                mode = self._active_mode.split("_", 1)[1]  # tl / r / b / ...
-                min_size = 3
-
-                if "l" in mode:
-                    new_left = min(pt.x(), new_rect_w.right() - min_size)
-                    new_rect_w.setLeft(new_left)
-
-                if "r" in mode:
-                    new_right = max(pt.x(), new_rect_w.left() + min_size)
-                    new_rect_w.setRight(new_right)
-
-                if "t" in mode:
-                    new_top = min(pt.y(), new_rect_w.bottom() - min_size)
-                    new_rect_w.setTop(new_top)
-
-                if "b" in mode:
-                    new_bottom = max(pt.y(), new_rect_w.top() + min_size)
-                    new_rect_w.setBottom(new_bottom)
-
-            # в координаты изображения + отсечение по границам
+            new_rect_w = rect_from_drag(self._active_orig_rect_w, self._active_start, pt, self._active_mode)
             new_rect_img = self._w_to_img(new_rect_w)
             self._rects_img[self._active_index] = new_rect_img
             self.update()
@@ -340,11 +221,7 @@ class SelectionOverlay(QWidget):
             if new_rect_img != old_rect_img:
                 self.rectChanged.emit(self._active_index, old_rect_img, new_rect_img)
 
-            self._active_index = None
-            self._active_mode = None
-            self._active_start = None
-            self._active_orig_rect_w = None
-            self._active_orig_rect_img = None
+            self._clear_active_interaction()
             self._update_hover_cursor(pt)
             ev.accept()
             return
@@ -358,8 +235,7 @@ class SelectionOverlay(QWidget):
                 self._labels.append("")
                 self.rectAdded.emit(r_img)
 
-            self._drag_start = None
-            self._drag_current = None
+            self._clear_drag_state()
             self._update_hover_cursor(pt)
             self.update()
             ev.accept()
@@ -372,66 +248,90 @@ class SelectionOverlay(QWidget):
             self.unsetCursor()
         super().leaveEvent(ev)
 
-    # ---- утилиты ----
+    # ---- interaction helpers ----
+    def _try_delete_rect(self, pt: QPoint, ev) -> bool:
+        for idx, r_img in enumerate(self._rects_img):
+            if not self._cross_rect_widget(r_img).contains(pt):
+                continue
+
+            rect_deleted = self._rects_img[idx]
+            del self._rects_img[idx]
+            if idx < len(self._labels):
+                del self._labels[idx]
+
+            self._update_selection_after_delete(idx)
+            self.unsetCursor()
+            self.update()
+            self.rectDeleted.emit(idx, rect_deleted)
+            ev.accept()
+            return True
+
+        return False
+
+    def _try_start_interaction(self, pt: QPoint, ev) -> bool:
+        for idx in reversed(range(len(self._rects_img))):
+            r_img = self._rects_img[idx]
+            r_w = self._img_to_w(r_img)
+
+            resize_mode = self._hit_test_resize_zone_widget(r_img, pt)
+            if resize_mode is not None:
+                self._begin_active_interaction(idx, resize_mode, pt, r_w, r_img)
+                ev.accept()
+                return True
+
+            if r_w.contains(pt):
+                self._begin_active_interaction(idx, "move", pt, r_w, r_img)
+                ev.accept()
+                return True
+
+        return False
+
+    def _begin_active_interaction(self, idx: int, mode: str, pt: QPoint, r_w: QRect, r_img: QRect) -> None:
+        self._user_select(idx)
+        self._active_index = idx
+        self._active_mode = mode
+        self._active_start = pt
+        self._active_orig_rect_w = QRect(r_w)
+        self._active_orig_rect_img = QRect(r_img)
+        self._set_cursor_for_mode(mode)
+
+    def _update_selection_after_delete(self, idx: int) -> None:
+        if self._selected_index is None:
+            return
+        if idx == self._selected_index:
+            self._selected_index = None
+            self.selectionCleared.emit()
+        elif idx < self._selected_index:
+            self._selected_index -= 1
+
+    def _clear_active_interaction(self) -> None:
+        self._active_index = None
+        self._active_mode = None
+        self._active_start = None
+        self._active_orig_rect_w = None
+        self._active_orig_rect_img = None
+
+    def _start_drag(self, pt: QPoint) -> None:
+        self._drag_start = pt
+        self._drag_current = pt
+
+    def _clear_drag_state(self) -> None:
+        self._drag_start = None
+        self._drag_current = None
+
+    # ---- geometry/cursor helpers ----
     def _cross_rect_widget(self, r_img: QRect) -> QRect:
-        r_w = self._img_to_w(r_img)
-        return QRect(r_w.topLeft() + QPoint(22, 0), QSize(self._cross_size, self._cross_size))
+        return cross_rect_widget(r_img, self._img_to_w, self._cross_size)
 
     def _hit_test_resize_zone_widget(self, r_img: QRect, pt: QPoint) -> Optional[str]:
-        """
-        Возвращает:
-        resize_tl, resize_tr, resize_bl, resize_br,
-        resize_l, resize_r, resize_t, resize_b
-        или None, если курсор не на рамке.
-        """
-        r_w = self._img_to_w(r_img)
-        m = self._resize_margin
-
-        outer = r_w.adjusted(-m, -m, m, m)
-        if not outer.contains(pt):
-            return None
-
-        inner = r_w.adjusted(m, m, -m, -m)
-        if inner.isValid() and inner.contains(pt):
-            return None
-
-        left = abs(pt.x() - r_w.left()) <= m
-        right = abs(pt.x() - r_w.right()) <= m
-        top = abs(pt.y() - r_w.top()) <= m
-        bottom = abs(pt.y() - r_w.bottom()) <= m
-
-        if top and left:
-            return "resize_tl"
-        if top and right:
-            return "resize_tr"
-        if bottom and left:
-            return "resize_bl"
-        if bottom and right:
-            return "resize_br"
-        if left:
-            return "resize_l"
-        if right:
-            return "resize_r"
-        if top:
-            return "resize_t"
-        if bottom:
-            return "resize_b"
-
-        return None
+        return hit_test_resize_zone_widget(r_img, pt, self._img_to_w, self._resize_margin)
 
     def _set_cursor_for_mode(self, mode: Optional[str]) -> None:
-        if mode in ("resize_l", "resize_r"):
-            self.setCursor(Qt.SizeHorCursor)
-        elif mode in ("resize_t", "resize_b"):
-            self.setCursor(Qt.SizeVerCursor)
-        elif mode in ("resize_tl", "resize_br"):
-            self.setCursor(Qt.SizeFDiagCursor)
-        elif mode in ("resize_tr", "resize_bl"):
-            self.setCursor(Qt.SizeBDiagCursor)
-        elif mode == "move":
-            self.setCursor(Qt.SizeAllCursor)
-        else:
+        cursor_shape = cursor_shape_for_mode(mode)
+        if cursor_shape is None:
             self.unsetCursor()
+            return
+        self.setCursor(cursor_shape)
 
     def _update_hover_cursor(self, pt: QPoint) -> None:
         for idx in reversed(range(len(self._rects_img))):

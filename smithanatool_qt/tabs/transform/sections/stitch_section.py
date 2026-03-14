@@ -54,18 +54,20 @@ class StitchSection(QWidget):
         self._stitch_mode_le = QLineEdit(self)
         self._stitch_mode_le.setVisible(False)  # stitch_mode
 
-        # Направление
+        # Настройки
+        grp_dim = QGroupBox("Настройки")
+        v_dim = QVBoxLayout(grp_dim)
+        v_dim.setSpacing(8)
+
         row_dir = QHBoxLayout()
         row_dir.addWidget(QLabel("Направление склейки:"))
         self.cmb_dir = QComboBox()
         self.cmb_dir.addItems(["По вертикали", "По горизонтали"])
         row_dir.addWidget(self.cmb_dir)
         row_dir.addStretch(1)
-        v.addLayout(row_dir)
+        v_dim.addLayout(row_dir)
 
-        # Размер
-        grp_dim = QGroupBox("Размер")
-        row_dim = QHBoxLayout(grp_dim)
+        row_dim = QHBoxLayout()
         self.chk_no_resize = QCheckBox("Не изменять ширину")
         self.lbl_dim = QLabel("Ширина:")
         self.spin_dim = QSpinBox()
@@ -77,6 +79,8 @@ class StitchSection(QWidget):
         row_dim.addWidget(self.lbl_dim)
         row_dim.addWidget(self.spin_dim)
         row_dim.addStretch(1)
+        v_dim.addLayout(row_dim)
+
         v.addWidget(grp_dim)
 
         # PNG-опции

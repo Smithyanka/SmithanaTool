@@ -28,6 +28,11 @@ class PreviewPanel(StateMixin, SelectionMixin, UndoMixin, ZoomMixin, SliceMixin,
     dirtyChanged = Signal(str, bool)
     sliceCountChanged = Signal(int)
 
+    ocrSortRectsRequested = Signal()
+    ocrDeleteRectsRequested = Signal()
+    ocrUndoRequested = Signal()
+    ocrRedoRequested = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -60,6 +65,11 @@ class PreviewPanel(StateMixin, SelectionMixin, UndoMixin, ZoomMixin, SliceMixin,
         self._selection_enabled: bool = True
         self._actions_ui_enabled: bool = True
         self._actions_pinned_saved: Optional[bool] = None
+        self._actions_profile: str = "transform"
+        self._ocr_delete_available: bool = False
+        self._ocr_undo_available: bool = False
+        self._ocr_redo_available: bool = False
+        self._ocr_sort_tooltip: str = "Сменить порядок рамок"
 
         # Нарезка
         self._slice_enabled: bool = False
@@ -112,13 +122,23 @@ class PreviewPanel(StateMixin, SelectionMixin, UndoMixin, ZoomMixin, SliceMixin,
         self.action_btn_undo.clicked.connect(self._undo_last)
         self.action_btn_redo.clicked.connect(self._redo_last)
 
+        if hasattr(self, "action_btn_ocr_sort"):
+            self.action_btn_ocr_sort.clicked.connect(self.ocrSortRectsRequested.emit)
+        if hasattr(self, "action_btn_ocr_delete"):
+            self.action_btn_ocr_delete.clicked.connect(self.ocrDeleteRectsRequested.emit)
+        if hasattr(self, "action_btn_ocr_undo"):
+            self.action_btn_ocr_undo.clicked.connect(self.ocrUndoRequested.emit)
+        elif hasattr(self, "action_btn_ocr_restore"):
+            self.action_btn_ocr_restore.clicked.connect(self.ocrUndoRequested.emit)
+        if hasattr(self, "action_btn_ocr_redo"):
+            self.action_btn_ocr_redo.clicked.connect(self.ocrRedoRequested.emit)
 
         # Хоткеи
 
         QShortcut(QKeySequence("Ctrl+X"), self, activated=self._cut_selection)
-        QShortcut(QKeySequence("Ctrl+Z"), self, activated=self._undo_last)
-        QShortcut(QKeySequence("Ctrl+Shift+Z"), self, activated=self._redo_last)
-        QShortcut(QKeySequence("Ctrl+Y"), self, activated=self._redo_last)
+        QShortcut(QKeySequence("Ctrl+Z"), self, activated=self._dispatch_undo_action)
+        QShortcut(QKeySequence("Ctrl+Shift+Z"), self, activated=self._dispatch_redo_action)
+        QShortcut(QKeySequence("Ctrl+Y"), self, activated=self._dispatch_redo_action)
         QShortcut(QKeySequence("Ctrl+C"), self, activated=self._copy_selection)
 
         self.sc_paste_top = QShortcut(QKeySequence("Ctrl+D"), self)
@@ -157,6 +177,26 @@ class PreviewPanel(StateMixin, SelectionMixin, UndoMixin, ZoomMixin, SliceMixin,
         self._apply_zoom_ui_mode(getattr(self, "_zoom_ui_mode", 0))
         self._position_overlay_controls()
 
+
+
+    def _dispatch_undo_action(self) -> None:
+        if getattr(self, "_actions_profile", "transform") == "ocr":
+            try:
+                self.ocrUndoRequested.emit()
+                return
+            except Exception:
+                pass
+        self._undo_last()
+
+    def _dispatch_redo_action(self) -> None:
+        if getattr(self, "_actions_profile", "transform") == "ocr":
+            try:
+                self.ocrRedoRequested.emit()
+                return
+            except Exception:
+                pass
+        self._redo_last()
+
     def set_pan_passthrough_widget(self, w):
         self._pan_passthrough_widget = w
 
@@ -169,6 +209,60 @@ class PreviewPanel(StateMixin, SelectionMixin, UndoMixin, ZoomMixin, SliceMixin,
                 pass
         try:
             self.label.update()
+        except Exception:
+            pass
+
+    def set_actions_profile(self, profile: str) -> None:
+        profile = "ocr" if str(profile).strip().lower() == "ocr" else "transform"
+        self._actions_profile = profile
+
+        for w in getattr(self, "_transform_action_widgets", []):
+            try:
+                w.setVisible(profile == "transform")
+            except Exception:
+                pass
+
+        for w in getattr(self, "_ocr_action_widgets", []):
+            try:
+                w.setVisible(profile == "ocr")
+            except Exception:
+                pass
+
+        try:
+            self._update_actions_enabled()
+        except Exception:
+            pass
+        try:
+            QTimer.singleShot(0, self._position_overlay_controls)
+        except Exception:
+            pass
+
+    def set_ocr_menu_state(
+        self,
+        *,
+        delete_enabled: Optional[bool] = None,
+        undo_enabled: Optional[bool] = None,
+        redo_enabled: Optional[bool] = None,
+        restore_enabled: Optional[bool] = None,
+        sort_tooltip: Optional[str] = None,
+    ) -> None:
+        if delete_enabled is not None:
+            self._ocr_delete_available = bool(delete_enabled)
+        if undo_enabled is None and restore_enabled is not None:
+            undo_enabled = restore_enabled
+        if undo_enabled is not None:
+            self._ocr_undo_available = bool(undo_enabled)
+        if redo_enabled is not None:
+            self._ocr_redo_available = bool(redo_enabled)
+        if sort_tooltip is not None:
+            self._ocr_sort_tooltip = str(sort_tooltip)
+            try:
+                self.action_btn_ocr_sort.setToolTip(self._ocr_sort_tooltip)
+            except Exception:
+                pass
+
+        try:
+            self._update_actions_enabled()
         except Exception:
             pass
 

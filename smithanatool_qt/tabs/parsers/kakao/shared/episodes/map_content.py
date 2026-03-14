@@ -14,6 +14,13 @@ def _extract_episode_no(title: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+def _to_int(value) -> Optional[int]:
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
 def normalize_episode_row(ep: dict) -> Optional[dict]:
     if not isinstance(ep, dict):
         return None
@@ -42,6 +49,42 @@ def normalize_episode_row(ep: dict) -> Optional[dict]:
     }
 
 
+def _canonicalize_episode_rows(rows: Iterable[dict]) -> list[dict]:
+    prepared: list[dict] = []
+    seen_product_ids: set[int] = set()
+
+    for idx, raw in enumerate(rows or []):
+        if not isinstance(raw, dict):
+            continue
+
+        if "node" in raw or "single" in raw:
+            row = normalize_episode_row(raw)
+        else:
+            row = dict(raw)
+
+        if not isinstance(row, dict):
+            continue
+
+        pid = _to_int(row.get("productId"))
+        if not pid or pid in seen_product_ids:
+            continue
+
+        seen_product_ids.add(pid)
+        row["productId"] = pid
+        row["_orig_idx"] = idx
+        prepared.append(row)
+
+    # Сохраняем исходный порядок из list_episodes().
+    prepared.sort(key=lambda row: row["_orig_idx"])
+
+    out: list[dict] = []
+    for row in prepared:
+        row = dict(row)
+        row.pop("_orig_idx", None)
+        out.append(row)
+    return out
+
+
 def safe_list_all(series_id: int, sort: str, cookie_raw: Optional[str], log: Optional[Callable[[str], None]],
                   stop_flag: Optional[Callable[[], bool]] = None, retries: int = 2) -> list[dict]:
     last_err = None
@@ -52,11 +95,11 @@ def safe_list_all(series_id: int, sort: str, cookie_raw: Optional[str], log: Opt
             client = KakaoPageApi(cookie_raw=cookie_raw, log=log)
             rows = [
                 normalized
-                for edge in client.list_episodes(series_id=int(series_id), sort=sort, page_size=200)
+                for edge in client.list_episodes(series_id=int(series_id), sort=sort)
                 for normalized in [normalize_episode_row(edge)]
                 if normalized is not None
             ]
-            return rows
+            return _canonicalize_episode_rows(rows)
         except Exception as e:
             last_err = e
             if log:
@@ -83,9 +126,10 @@ def load_episode_map(out_dir: str | Path, series_id: int, log: Optional[Callable
         rows = json.loads(path.read_text(encoding="utf-8-sig"))
 
     if isinstance(rows, list):
+        rows = _canonicalize_episode_rows(rows)
         if log:
             log(f"[CACHE] Загружена карта эпизодов из {path}")
-        return [row for row in rows if isinstance(row, dict)]
+        return rows
 
     if log:
         log(f"[WARN] Некорректный формат кэша карты эпизодов: {path}")
@@ -95,7 +139,7 @@ def load_episode_map(out_dir: str | Path, series_id: int, log: Optional[Callable
 def save_episode_map(out_dir: str | Path, series_id: int, rows: Iterable[dict],
                      log: Optional[Callable[[str], None]] = None) -> Path:
     path = episode_map_path(out_dir, series_id)
-    data = [row for row in (rows or []) if isinstance(row, dict)]
+    data = _canonicalize_episode_rows(rows)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     if log:
         log(f"[CACHE] Сохранена карта эпизодов: {path}")
@@ -105,7 +149,7 @@ def save_episode_map(out_dir: str | Path, series_id: int, rows: Iterable[dict],
 def refresh_episode_map(series_id: int, out_dir: str | Path, cookie_raw: Optional[str],
                         log: Optional[Callable[[str], None]] = None,
                         stop_flag: Optional[Callable[[], bool]] = None,
-                        sort: str = "desc",
+                        sort: str = "asc",
                         retries: int = 2,
                         fallback_to_cache: bool = True) -> list[dict]:
     rows = safe_list_all(
@@ -131,7 +175,7 @@ def refresh_episode_map(series_id: int, out_dir: str | Path, cookie_raw: Optiona
 
 
 def picker_rows_from_episode_map(rows: Iterable[dict]) -> list[dict]:
-    ordered = [dict(row) for row in reversed(list(rows or [])) if isinstance(row, dict)]
+    ordered = [dict(row) for row in (rows or []) if isinstance(row, dict)]
     for idx, row in enumerate(ordered, 1):
         row["cursor"] = idx
         if not row.get("title"):

@@ -1,8 +1,11 @@
 from __future__ import annotations
-
+import os
 from typing import List
 
 from PySide6.QtCore import Qt, QPoint, QSize
+
+
+_ITEM_UID_ROLE = int(Qt.UserRole + 1)
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QListWidgetItem, QFileDialog, QMenu
 
@@ -86,22 +89,60 @@ class RightPanelListMixin:
         rows = sorted(set(r for r in rows if 0 <= r < self.list.count()), reverse=True)
         if not rows:
             return
+
+        payload: list[tuple[int, str]] = []
+        for r in rows:
+            item = self.list.item(r)
+            uid = str(item.data(_ITEM_UID_ROLE) or "") if item is not None else ""
+            payload.append((r, uid))
+
         self._block_item_changed = True
         try:
-            for r in rows:
+            for r, _uid in payload:
                 self.list.takeItem(r)
         finally:
             self._block_item_changed = False
-        for r in rows:
-            self.itemDeleted.emit(r)
+
+        for _r, uid in payload:
+            if uid:
+                self.itemDeletedByUid.emit(uid)
         self._relabel()
 
     def _on_save(self):
+        start_dir = self._get_save_text_dir()
+        start_path = os.path.join(start_dir, "extracted.txt") if start_dir else "extracted.txt"
+
         path, _ = QFileDialog.getSaveFileName(
-            self, "Сохранить как", "extracted.txt", "Текст (*.txt)"
+            self,
+            "Сохранить как",
+            start_path,
+            "Текст (*.txt)",
         )
-        if path:
-            self.saveRequested.emit(path)
+        if not path:
+            return
+
+        self._set_save_text_dir(os.path.dirname(path))
+        self.saveRequested.emit(path)
+
+    def _on_save_all(self):
+        start_dir = self._get_save_all_text_dir()
+        start_path = (
+            os.path.join(start_dir, "extracted_all.txt")
+            if start_dir
+            else "extracted_all.txt"
+        )
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить всё как",
+            start_path,
+            "Текст (*.txt)",
+        )
+        if not path:
+            return
+
+        self._set_save_all_text_dir(os.path.dirname(path))
+        self.saveAllRequested.emit(path)
 
     # контекстное меню списка
     def _on_context_menu(self, pos: QPoint):
@@ -145,8 +186,13 @@ class RightPanelListMixin:
     def _on_item_changed(self, item: QListWidgetItem):
         if self._block_item_changed:
             return
-        row = self.list.row(item)
+
         text = item.text()
         if ". " in text:
             text = text.split(". ", 1)[1]
-        self.itemEdited.emit(row, text)
+
+        uid = str(item.data(_ITEM_UID_ROLE) or "")
+        if not uid:
+            return
+
+        self.itemEditedByUid.emit(uid, text)

@@ -46,7 +46,7 @@ def _default_api_key_for_kind(kind: str) -> str:
     if k == "anthropic":
         return os.getenv("ANTHROPIC_API_KEY", "").strip()
     if k == "gemini_native":
-        return (os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip())
+        return os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
     if k == "azure_openai":
         return os.getenv("AZURE_OPENAI_API_KEY", "").strip()
     # openai_compat
@@ -54,9 +54,9 @@ def _default_api_key_for_kind(kind: str) -> str:
 
 
 def build_ocr_runtime_config(right_panel) -> OcrRuntimeConfig:
-    """Снимает "снэпшот" настроек OCR с UI.
+    """Снимает snapshot OCR-настроек с UI.
 
-    ВАЖНО: возвращаемая структура не зависит от индексов в combobox.
+    Важно: возвращаемая структура не зависит от индексов в combobox.
     """
     src = getattr(right_panel, "settings", right_panel)
 
@@ -69,7 +69,6 @@ def build_ocr_runtime_config(right_panel) -> OcrRuntimeConfig:
     if not isinstance(extra, dict):
         extra = {}
 
-    # lang
     lang_code = _safe_get_current_data(getattr(src, "cmb_lang", None)).lower()
 
     if kind == "yandex":
@@ -86,7 +85,6 @@ def build_ocr_runtime_config(right_panel) -> OcrRuntimeConfig:
             extra={"folder_id": folder_id, **extra},
         )
 
-    # LLM-like OCR engines
     api_key = _safe_get_text(getattr(src, "ed_api_key", None))
     if not api_key:
         api_key = _default_api_key_for_kind(kind)

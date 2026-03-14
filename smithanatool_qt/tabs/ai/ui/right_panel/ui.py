@@ -44,5 +44,12 @@ def build_list(panel, parent_layout: QVBoxLayout) -> None:
 
 
 def build_save_button(panel, parent_layout: QVBoxLayout) -> None:
-    panel.btn_save = QPushButton("Сохранить…")
-    parent_layout.addWidget(panel.btn_save)
+    row_save = QHBoxLayout()
+    row_save.setSpacing(8)
+
+    panel.btn_save = QPushButton("Сохранить")
+    panel.btn_save_all = QPushButton("Сохранить все")
+
+    row_save.addWidget(panel.btn_save)
+    row_save.addWidget(panel.btn_save_all)
+    parent_layout.addLayout(row_save)

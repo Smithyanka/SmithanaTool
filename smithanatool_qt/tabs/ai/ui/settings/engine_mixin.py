@@ -17,25 +17,8 @@ class AiSettingsEngineMixin:
         """Применить готовый EngineManager к UI (GUI-поток)."""
         self._engine_mgr = mgr
         self._rebuild_engine_combo()
-
-        # ВАЖНО: предпочитаем engine_id вместо engine_idx
-        saved_id = str(self._get_ini("engine_id", "", typ=str) or "").strip()
-        if saved_id:
-            idx_by_id = self._index_by_engine_id(saved_id)
-            if idx_by_id >= 0:
-                self.cmb_engine.setCurrentIndex(idx_by_id)
-            else:
-                self._restore_engine_idx_fallback()
-        else:
-            self._restore_engine_idx_fallback()
-
-        # миграция: если был выбран по idx — сохраним engine_id
-        try:
-            cur = self._current_engine()
-            if cur is not None:
-                self._save_ini("engine_id", cur.id)
-        except Exception:
-            pass
+        self._restore_current_engine_selection()
+        self._migrate_current_engine_id()
 
         self._last_engine_id = ""
         self._on_engine_changed()
@@ -50,6 +33,22 @@ class AiSettingsEngineMixin:
         mgr = EngineManager.from_sources(custom_engines=custom, gemini_api_key=gemini_key)
         self._apply_engine_manager(mgr)
 
+    def _restore_current_engine_selection(self) -> None:
+        saved_id = str(self._get_ini("engine_id", "", typ=str) or "").strip()
+        if saved_id:
+            idx_by_id = self._index_by_engine_id(saved_id)
+            if idx_by_id >= 0:
+                self.cmb_engine.setCurrentIndex(idx_by_id)
+                return
+        self._restore_engine_idx_fallback()
+
+    def _migrate_current_engine_id(self) -> None:
+        try:
+            cur = self._current_engine()
+            if cur is not None:
+                self._save_ini("engine_id", cur.id)
+        except Exception:
+            pass
 
     def _restore_engine_idx_fallback(self) -> None:
         saved_idx = self._get_ini("engine_idx", 0, typ=int)
@@ -86,14 +85,19 @@ class AiSettingsEngineMixin:
         return mgr.index_of_id(engine_id)
 
     def _current_engine(self) -> EngineSpec | None:
-        return self._engine_at(int(self.cmb_engine.currentIndex()))
+        return self._engine_at(self._current_engine_index())
+
+    def _current_engine_index(self) -> int:
+        try:
+            return int(self.cmb_engine.currentIndex())
+        except Exception:
+            return 0
 
     def _rebuild_engine_combo(self) -> None:
         self.cmb_engine.blockSignals(True)
         try:
             self.cmb_engine.clear()
             for eng in self._engine_mgr.list():
-                # itemData будет доступен через currentData()
                 self.cmb_engine.addItem(
                     eng.name,
                     {
@@ -151,6 +155,45 @@ class AiSettingsEngineMixin:
         except Exception:
             pass
 
+    def _persist_api_key_for_engine(self, eng: EngineSpec, key: str) -> None:
+        if eng.builtin:
+            if eng.kind == "openai_compat":
+                self._save_ini("gemini_api_key", key)
+            else:
+                self._save_ini(f"builtin_api_key__{eng.kind}", key)
+            return
+        self._persist_custom_engines()
+
+    def _restore_model_selection_for_current_engine(self) -> None:
+        model_id = str(self._get_ini("model_id", "", typ=str) or "").strip()
+        if model_id:
+            ok = self._set_combo_by_data(self.cmb_model, model_id)
+            if not ok and self.cmb_model.count() > 0:
+                self.cmb_model.setCurrentIndex(0)
+        else:
+            try:
+                model_idx = int(self._get_ini("model_idx", 0, typ=int))
+            except Exception:
+                model_idx = 0
+            if 0 <= model_idx < self.cmb_model.count():
+                self.cmb_model.setCurrentIndex(model_idx)
+            elif self.cmb_model.count() > 0:
+                self.cmb_model.setCurrentIndex(0)
+
+        try:
+            cur_model_id = str(self.cmb_model.currentData() or "").strip()
+            if cur_model_id:
+                self._save_ini("model_id", cur_model_id)
+        except Exception:
+            pass
+
+    def _rebuild_combo_and_select(self, index: int) -> None:
+        self._rebuild_engine_combo()
+        if self.cmb_engine.count() > 0:
+            safe_index = max(0, min(int(index), self.cmb_engine.count() - 1))
+            self.cmb_engine.setCurrentIndex(safe_index)
+        self._on_engine_changed()
+
     # ---- save/load api key on switching ----
 
     def _save_prev_engine_api_key(self) -> None:
@@ -164,14 +207,7 @@ class AiSettingsEngineMixin:
 
         key = (self.ed_api_key.text() or "").strip()
         self._engine_mgr.set_api_key_by_id(prev_id, key)
-
-        if eng.builtin:
-            if eng.kind == "openai_compat":
-                self._save_ini("gemini_api_key", key)
-            else:
-                self._save_ini(f"builtin_api_key__{eng.kind}", key)
-        else:
-            self._persist_custom_engines()
+        self._persist_api_key_for_engine(eng, key)
 
     def _load_current_engine_api_key(self) -> None:
         eng = self._current_engine()
@@ -189,60 +225,26 @@ class AiSettingsEngineMixin:
         self._save_prev_engine_api_key()
 
         cur = self._current_engine()
-
-        # сохраняем только engine_id (idx оставляем только как fallback для чтения)
         if cur is not None:
             self._save_ini("engine_id", cur.id)
             self._last_engine_id = cur.id
         else:
             self._last_engine_id = ""
 
-        # подгружаем ключ и обновляем UI
         if cur is not None and not cur.is_yandex():
             self._load_current_engine_api_key()
         self._refresh_engine_ui()
-
-        # восстановить модель (после обновления списка моделей)
-        # новый формат: model_id (itemData), fallback: model_idx
-        model_id = str(self._get_ini("model_id", "", typ=str) or "").strip()
-        if model_id:
-            ok = self._set_combo_by_data(self.cmb_model, model_id)
-            if not ok and self.cmb_model.count() > 0:
-                self.cmb_model.setCurrentIndex(0)
-        else:
-            try:
-                model_idx = int(self._get_ini("model_idx", 0, typ=int))
-            except Exception:
-                model_idx = 0
-            if 0 <= model_idx < self.cmb_model.count():
-                self.cmb_model.setCurrentIndex(model_idx)
-            elif self.cmb_model.count() > 0:
-                self.cmb_model.setCurrentIndex(0)
-
-        # миграция: если выставили индексом — сохраним model_id
-        try:
-            cur_model_id = str(self.cmb_model.currentData() or "").strip()
-            if cur_model_id:
-                self._save_ini("model_id", cur_model_id)
-        except Exception:
-            pass
+        self._restore_model_selection_for_current_engine()
 
     def _on_api_key_changed(self) -> None:
         eng = self._current_engine()
         if not eng or eng.is_yandex():
             return
 
-        idx = int(self.cmb_engine.currentIndex())
+        idx = self._current_engine_index()
         key = (self.ed_api_key.text() or "").strip()
         self._engine_mgr.set_api_key(idx, key)
-
-        if eng.builtin:
-            if eng.kind == "openai_compat":
-                self._save_ini("gemini_api_key", key)
-            else:
-                self._save_ini(f"builtin_api_key__{eng.kind}", key)
-        else:
-            self._persist_custom_engines()
+        self._persist_api_key_for_engine(eng, key)
 
     # ---- CRUD ----
 
@@ -279,12 +281,10 @@ class AiSettingsEngineMixin:
             return
 
         self._persist_custom_engines()
-        self._rebuild_engine_combo()
-        self.cmb_engine.setCurrentIndex(new_idx)
-        self._on_engine_changed()
+        self._rebuild_combo_and_select(new_idx)
 
     def _on_remove_engine(self) -> None:
-        idx = int(self.cmb_engine.currentIndex())
+        idx = self._current_engine_index()
         eng = self._engine_at(idx)
         if not eng:
             return
@@ -302,7 +302,6 @@ class AiSettingsEngineMixin:
         if res != QMessageBox.Yes:
             return
 
-        # на время операции сбросим last-id, чтобы ничего не "перетекло" при перестройке UI
         self._last_engine_id = ""
 
         try:
@@ -311,14 +310,10 @@ class AiSettingsEngineMixin:
             return
 
         self._persist_custom_engines()
-        self._rebuild_engine_combo()
-
-        if self.cmb_engine.count() > 0:
-            self.cmb_engine.setCurrentIndex(max(0, min(idx, self.cmb_engine.count() - 1)))
-        self._on_engine_changed()
+        self._rebuild_combo_and_select(idx)
 
     def _on_edit_engine(self) -> None:
-        idx = int(self.cmb_engine.currentIndex())
+        idx = self._current_engine_index()
         eng = self._engine_at(idx)
         if not eng:
             return
@@ -357,6 +352,4 @@ class AiSettingsEngineMixin:
             return
 
         self._persist_custom_engines()
-        self._rebuild_engine_combo()
-        self.cmb_engine.setCurrentIndex(idx)
-        self._on_engine_changed()
+        self._rebuild_combo_and_select(idx)

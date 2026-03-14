@@ -148,19 +148,61 @@ def setup_preview_ui(panel: "PreviewPanel") -> None:
     panel.action_btn_save = _mk_icon_btn("Сохранить (Ctrl+S)", "save.svg")
     panel.action_btn_save_as = _mk_icon_btn("Сохранить как… (Ctrl+Shift+S)", "saveas.svg")
 
-    # Порядок важен: "Рамка" должна быть выше "Вырезать".
-    panel._actions_layout.addWidget(panel.action_btn_frame)
-    panel._actions_layout.addWidget(make_sep(panel.actions_panel))
-    panel._actions_layout.addWidget(panel.action_btn_cut)
-    panel._actions_layout.addWidget(make_sep(panel.actions_panel))
-    panel._actions_layout.addWidget(panel.action_btn_paste_top)
-    panel._actions_layout.addWidget(panel.action_btn_paste_bottom)
-    panel._actions_layout.addWidget(make_sep(panel.actions_panel))
-    panel._actions_layout.addWidget(panel.action_btn_undo)
-    panel._actions_layout.addWidget(panel.action_btn_redo)
-    panel._actions_layout.addWidget(make_sep(panel.actions_panel))
-    panel._actions_layout.addWidget(panel.action_btn_save)
-    panel._actions_layout.addWidget(panel.action_btn_save_as)
+    panel.action_btn_ocr_sort = _mk_icon_btn(
+        "Сменить порядок рамок",
+        "sort_rects.svg",
+        "sort_rects.png",
+    )
+    panel.action_btn_ocr_delete = _mk_icon_btn(
+        "Удалить рамки",
+        "delete_rects.svg",
+        "delete_rects.png",
+    )
+    panel.action_btn_ocr_undo = _mk_icon_btn(
+        "Вернуть (Ctrl+Z)",
+        "undo.svg",
+        "arrow_undo.svg",
+        "undo.png",
+    )
+    panel.action_btn_ocr_redo = _mk_icon_btn(
+        "Вернуть обратно (Ctrl+Shift+Z)",
+        "redo.svg",
+        "redo.png",
+    )
+    # Алиас для обратной совместимости со старым именем.
+    panel.action_btn_ocr_restore = panel.action_btn_ocr_undo
+
+    panel._transform_action_widgets = [
+        panel.action_btn_frame,
+        make_sep(panel.actions_panel),
+        panel.action_btn_cut,
+        make_sep(panel.actions_panel),
+        panel.action_btn_paste_top,
+        panel.action_btn_paste_bottom,
+        make_sep(panel.actions_panel),
+        panel.action_btn_undo,
+        panel.action_btn_redo,
+        make_sep(panel.actions_panel),
+        panel.action_btn_save,
+        panel.action_btn_save_as,
+    ]
+
+    panel._ocr_action_widgets = [
+        panel.action_btn_ocr_sort,
+        make_sep(panel.actions_panel),
+        panel.action_btn_ocr_delete,
+        make_sep(panel.actions_panel),
+        panel.action_btn_ocr_undo,
+        panel.action_btn_ocr_redo,
+    ]
+
+    # Порядок важен: сперва обычные действия превью, затем OCR-профиль меню.
+    for w in panel._transform_action_widgets:
+        panel._actions_layout.addWidget(w)
+
+    for w in panel._ocr_action_widgets:
+        panel._actions_layout.addWidget(w)
+        w.hide()
 
 
     panel.btn_actions_handle = QToolButton(vp)

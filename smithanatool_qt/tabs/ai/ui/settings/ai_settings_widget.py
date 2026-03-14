@@ -69,7 +69,6 @@ class AiSettingsWidget(QWidget, AiSettingsIniMixin, AiSettingsEngineMixin):
     - Сам строит UI (build_settings_group)
     - Сам восстанавливает/сохраняет INI (только settings-ключи)
     - Сам асинхронно поднимает EngineManager (QThread)
-
     """
 
     enginesReady = Signal()
@@ -100,18 +99,11 @@ class AiSettingsWidget(QWidget, AiSettingsIniMixin, AiSettingsEngineMixin):
 
         self._settings_group = None
 
-        # Не стартуем автоматически тяжёлые вещи, чтобы можно было вставить/показать UI.
-        # Вызови start_async_init() после добавления в layout (right_panel делает это).
-
     def start_async_init(self) -> None:
         if self._started:
             return
         self._started = True
-
-        if self._loading is not None:
-            self._loading.setText("Загрузка настроек…")
-            self._loading.repaint()
-
+        self._set_loading_text("Загрузка настроек…")
         QTimer.singleShot(0, lambda: QTimer.singleShot(0, self._late_build_ui_and_init))
 
     # ------------------------
@@ -123,30 +115,41 @@ class AiSettingsWidget(QWidget, AiSettingsIniMixin, AiSettingsEngineMixin):
             return
         self._ui_built = True
 
-        # 1) UI
         self.setUpdatesEnabled(False)
         try:
-            self._settings_group = build_settings_group(self)
-            self.layout().addWidget(self._settings_group)
-
-            # CRUD по движкам
-            self.btn_add_engine.clicked.connect(self._on_add_engine)
-            try:
-                self.btn_remove_engine.clicked.connect(self._on_remove_engine)
-                self.btn_edit_engine.clicked.connect(self._on_edit_engine)
-            except Exception:
-                pass
-
-            # restore settings (быстро)
+            self._build_settings_ui()
             self._restore_ini_settings()
-
-            # пока движки не готовы — блокируем engine-контролы
             self._set_engine_widgets_enabled(False)
         finally:
             self.setUpdatesEnabled(True)
 
-        # 2) engines init
         self._start_engines_init_thread()
+
+    def _build_settings_ui(self) -> None:
+        self._settings_group = build_settings_group(self)
+        self.layout().addWidget(self._settings_group)
+        self._connect_static_ui_actions()
+
+    def _connect_static_ui_actions(self) -> None:
+        self.btn_add_engine.clicked.connect(self._on_add_engine)
+        try:
+            self.btn_remove_engine.clicked.connect(self._on_remove_engine)
+            self.btn_edit_engine.clicked.connect(self._on_edit_engine)
+        except Exception:
+            pass
+
+    def _set_loading_text(self, text: str) -> None:
+        if self._loading is None:
+            return
+        self._loading.setText(text)
+        self._loading.repaint()
+
+    def _remove_loading_label(self) -> None:
+        if self._loading is None:
+            return
+        self._loading.setParent(None)
+        self._loading.deleteLater()
+        self._loading = None
 
     def _set_engine_widgets_enabled(self, enabled: bool) -> None:
         for name in (
@@ -158,30 +161,32 @@ class AiSettingsWidget(QWidget, AiSettingsIniMixin, AiSettingsEngineMixin):
             "cmb_model",
         ):
             w = getattr(self, name, None)
-            if w is not None:
-                try:
-                    w.setEnabled(enabled)
-                except Exception:
-                    pass
+            if w is None:
+                continue
+            try:
+                w.setEnabled(enabled)
+            except Exception:
+                pass
+
+    def _collect_engines_init_data(self) -> tuple[str, str, Path]:
+        gemini_key = (self._get_ini("gemini_api_key", "", typ=str) or "").strip()
+        legacy_raw = str(self._get_ini(self.KEY_CUSTOM_ENGINES, "", typ=str) or "")
+        return gemini_key, legacy_raw, self._custom_engines_path()
 
     def _start_engines_init_thread(self) -> None:
         if self._engines_inited or self._engines_thread is not None:
             return
 
-        # берём только данные (строки/путь) в GUI-потоке
-        gemini_key = (self._get_ini("gemini_api_key", "", typ=str) or "").strip()
-        legacy_raw = str(self._get_ini(self.KEY_CUSTOM_ENGINES, "", typ=str) or "")
-        p = self._custom_engines_path()
+        gemini_key, legacy_raw, path = self._collect_engines_init_data()
 
         self._engines_thread = QThread(self)
-        self._engines_worker = _EnginesInitWorker(p, legacy_raw, gemini_key)
+        self._engines_worker = _EnginesInitWorker(path, legacy_raw, gemini_key)
         self._engines_worker.moveToThread(self._engines_thread)
 
         self._engines_thread.started.connect(self._engines_worker.run)
         self._engines_worker.finished.connect(self._on_engines_ready)
         self._engines_worker.failed.connect(self._on_engines_failed)
 
-        # корректная уборка
         self._engines_worker.finished.connect(self._engines_thread.quit)
         self._engines_worker.failed.connect(self._engines_thread.quit)
         self._engines_worker.finished.connect(self._engines_worker.deleteLater)
@@ -190,18 +195,7 @@ class AiSettingsWidget(QWidget, AiSettingsIniMixin, AiSettingsEngineMixin):
 
         self._engines_thread.start()
 
-    def _on_engines_ready(self, payload: dict) -> None:
-        self._engines_inited = True
-
-        # если мигрировали legacy INI -> файл, чистим legacy ключ в GUI-потоке
-        if payload.get("clear_legacy"):
-            self._save_ini(self.KEY_CUSTOM_ENGINES, "")
-
-        mgr = payload.get("engine_mgr")
-        if mgr is not None:
-            self._apply_engine_manager(mgr)
-
-        # теперь можно подключать сигналы сохранения и движков
+    def _wire_post_init_signals(self) -> None:
         if not self._persistence_wired:
             self._wire_persistence_settings()
             self._persistence_wired = True
@@ -210,27 +204,28 @@ class AiSettingsWidget(QWidget, AiSettingsIniMixin, AiSettingsEngineMixin):
             self._wire_engine_signals()
             self._engine_signals_wired = True
 
-        # убрать "loading" лейбл
-        if self._loading is not None:
-            self._loading.setParent(None)
-            self._loading.deleteLater()
-            self._loading = None
-
-        self._set_engine_widgets_enabled(True)
-
-        # сброс ссылок
+    def _reset_engines_init_refs(self) -> None:
         self._engines_thread = None
         self._engines_worker = None
 
+    def _on_engines_ready(self, payload: dict) -> None:
+        self._engines_inited = True
+
+        if payload.get("clear_legacy"):
+            self._save_ini(self.KEY_CUSTOM_ENGINES, "")
+
+        mgr = payload.get("engine_mgr")
+        if mgr is not None:
+            self._apply_engine_manager(mgr)
+
+        self._wire_post_init_signals()
+        self._remove_loading_label()
+        self._set_engine_widgets_enabled(True)
+        self._reset_engines_init_refs()
         self.enginesReady.emit()
 
     def _on_engines_failed(self, msg: str) -> None:
-        if self._loading is not None:
-            self._loading.setText(f"Не удалось загрузить движки: {msg}")
-
+        self._set_loading_text(f"Не удалось загрузить движки: {msg}")
         self._set_engine_widgets_enabled(False)
-
-        self._engines_thread = None
-        self._engines_worker = None
-
+        self._reset_engines_init_refs()
         self.enginesFailed.emit(msg)

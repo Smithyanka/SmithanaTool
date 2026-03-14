@@ -131,12 +131,12 @@ class KakaoPageApi:
 
         return data if isinstance(data, dict) else {}
 
-    def list_episodes(self, series_id: int, sort: str = 'desc', page_size: int = 200):
-        del sort  # REST-эндпоинт использует cursor_index/cursor_direction
+    def list_episodes(self, series_id: int, sort: str = 'asc', page_size: int = 100):
+        want_desc = str(sort or 'asc').lower() == 'desc'
 
-        collected: list[tuple[int, dict]] = []
+        total_count: int | None = None
         seen_product_ids: set[int] = set()
-        visited_pages: set[tuple[str, int]] = set()
+        ordered_edges: list[dict] = []
 
         def fetch(cursor_index: int, cursor_direction: str):
             data = self.request_json(
@@ -155,114 +155,109 @@ class KakaoPageApi:
             if not isinstance(rows, list):
                 rows = []
 
+            total_raw = result.get('total_count')
+            try:
+                total = int(total_raw)
+            except Exception:
+                total = None
+
+            return result, rows, total
+
+        def make_edge(row: dict) -> tuple[int | None, dict | None]:
+            if not isinstance(row, dict):
+                return None, None
+
+            item = row.get('item') or {}
+            if not isinstance(item, dict):
+                return None, None
+
+            product_id = item.get('product_id')
+            try:
+                product_id_int = int(product_id)
+            except Exception:
+                return None, None
+
+            operator_property = item.get('operator_property') or {}
+            service_property = item.get('service_property') or {}
+            last_view = service_property.get('last_view') or {}
+
+            edge = {
+                # здесь лучше хранить просто стабильный порядковый номер,
+                # а не cursor_index из ответа
+                'cursor': None,
+                'node': {
+                    'row1': item.get('title') or '',
+                    'scheme': None,
+                    'single': {
+                        'productId': product_id_int,
+                        'isFree': bool(item.get('is_free')),
+                        'title': item.get('title') or '',
+                        'slideType': item.get('slide_type'),
+                        'operatorProperty': {
+                            'isTextViewer': bool(operator_property.get('is_text_viewer', False))
+                        },
+                    },
+                    'isViewed': bool(last_view),
+                },
+            }
+            return product_id_int, edge
+
+        # Для полного списка не используем ANCHOR.
+        # Идём последовательно от 0 через NEXT.
+        cursor_index = 0
+        safety = 0
+
+        while True:
+            result, rows, total = fetch(cursor_index, 'NEXT')
+            if total_count is None:
+                total_count = total
+
+            added = 0
+            for row in rows:
+                pid, edge = make_edge(row)
+                if pid is None or edge is None:
+                    continue
+                if pid in seen_product_ids:
+                    continue
+
+                seen_product_ids.add(pid)
+                edge['cursor'] = str(len(ordered_edges) + 1)
+                ordered_edges.append(edge)
+                added += 1
+
             self.log(
-                f"[EP-LIST] dir={cursor_direction} cursor={cursor_index} "
-                f"got={len(rows) if isinstance(rows, list) else 0} "
-                f"has_prev={bool(result.get('has_prev'))} "
+                f"[EP-LIST] dir=NEXT cursor={cursor_index} "
+                f"got={len(rows)} added={added} "
                 f"has_next={bool(result.get('has_next'))} "
-                f"total_count={result.get('total_count')} "
-                f"unique={len(seen_product_ids)}"
+                f"total_count={total_count} collected={len(ordered_edges)}"
             )
 
-            return result, rows
-
-        def collect_rows(rows: list[dict]) -> None:
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-
-                item = row.get('item') or {}
-                if not isinstance(item, dict):
-                    continue
-
-                product_id = item.get('product_id')
-                try:
-                    product_id_int = int(product_id)
-                except Exception:
-                    continue
-
-                operator_property = item.get('operator_property') or {}
-                service_property = item.get('service_property') or {}
-                last_view = service_property.get('last_view') or {}
-
-                cursor_raw = row.get('cursor_index')
-                try:
-                    cursor_int = int(cursor_raw)
-                except Exception:
-                    cursor_int = 10 ** 12 + len(collected)
-
-                edge = {
-                    'cursor': str(cursor_raw or ''),
-                    'node': {
-                        'row1': item.get('title') or '',
-                        'scheme': None,
-                        'single': {
-                            'productId': product_id_int,
-                            'isFree': bool(item.get('is_free')),
-                            'title': item.get('title') or '',
-                            'slideType': item.get('slide_type'),
-                            'operatorProperty': {
-                                'isTextViewer': bool(operator_property.get('is_text_viewer', False))
-                            },
-                        },
-                        'isViewed': bool(last_view),
-                    },
-                }
-                collected.append((cursor_int, edge))
-
-        # 1) anchor
-        anchor_result, anchor_rows = fetch(0, 'ANCHOR')
-        if not anchor_rows:
-            return
-
-        collect_rows(anchor_rows)
-
-        # 2) идём в PREV от первой строки anchor
-        result = anchor_result
-        rows = anchor_rows
-        while result.get('has_prev') and rows:
-            first_cursor = rows[0].get('cursor_index')
-            try:
-                first_cursor = int(first_cursor)
-            except Exception:
-                break
-
-            page_key = ('PREV', first_cursor)
-            if page_key in visited_pages:
-                break
-            visited_pages.add(page_key)
-
-            result, rows = fetch(first_cursor, 'PREV')
             if not rows:
                 break
-            collect_rows(rows)
 
-        # 3) идём в NEXT от последней строки anchor
-        result = anchor_result
-        rows = anchor_rows
-        while result.get('has_next') and rows:
-            last_cursor = rows[-1].get('cursor_index')
-            try:
-                last_cursor = int(last_cursor)
-            except Exception:
+            if total_count is not None and len(ordered_edges) >= total_count:
                 break
 
-            page_key = ('NEXT', last_cursor)
-            if page_key in visited_pages:
+            if not bool(result.get('has_next')):
                 break
-            visited_pages.add(page_key)
 
-            result, rows = fetch(last_cursor, 'NEXT')
-            if not rows:
+            next_cursor = cursor_index + len(rows)
+            if next_cursor <= cursor_index:
                 break
-            collect_rows(rows)
 
-        # 4) сортируем по cursor_index и убираем дубли по productId
-        for _, edge in sorted(collected, key=lambda x: x[0]):
-            pid = edge['node']['single']['productId']
-            if pid in seen_product_ids:
-                continue
-            seen_product_ids.add(pid)
+            cursor_index = next_cursor
+            safety += 1
+            if safety > 1000:
+                break
+
+        if want_desc:
+            ordered_edges.reverse()
+            for idx, edge in enumerate(ordered_edges, 1):
+                edge['cursor'] = str(idx)
+
+        self.log(f"[EP-LIST] final collected={len(ordered_edges)} / total={total_count}")
+
+        for edge in ordered_edges:
             yield edge
 
     def ready_to_use_ticket(self, series_id: int, product_id: int) -> dict:

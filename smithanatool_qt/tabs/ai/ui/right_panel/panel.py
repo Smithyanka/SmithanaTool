@@ -16,10 +16,11 @@ from ..settings.ai_settings_widget import AiSettingsWidget
 class OcrRightPanel(QWidget, RightPanelIniMixin, RightPanelListMixin):
     aiRequested = Signal()
     saveRequested = Signal(str)
+    saveAllRequested = Signal(str)
 
     # CRUD по текстам
-    itemDeleted = Signal(int)  # index
-    itemEdited = Signal(int, str)  # index, new_text
+    itemDeletedByUid = Signal(str)  # uid
+    itemEditedByUid = Signal(str, str)  # uid, new_text
 
     handwritingRequested = Signal()
 
@@ -72,6 +73,7 @@ class OcrRightPanel(QWidget, RightPanelIniMixin, RightPanelListMixin):
         self.btn_extract.clicked.connect(self.aiRequested.emit)
         self.btn_handwriting.clicked.connect(self.handwritingRequested.emit)
         self.btn_save.clicked.connect(self._on_save)
+        self.btn_save_all.clicked.connect(self._on_save_all)
 
         self._block_item_changed = False
         self.list.itemChanged.connect(self._on_item_changed)

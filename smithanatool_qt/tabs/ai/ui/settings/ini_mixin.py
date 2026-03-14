@@ -28,20 +28,27 @@ class AiSettingsIniMixin:
     KEY_CUSTOM_ENGINES = "custom_engines"  # legacy (huge json string) — keep for migration
     CUSTOM_ENGINES_FILENAME = "custom_engines.json"
 
+    KEY_ENGINE_ID = "engine_id"
+    KEY_ENGINE_IDX = "engine_idx"
+    KEY_MODEL_ID = "model_id"
+    KEY_MODEL_IDX = "model_idx"
+    KEY_LANG_CODE = "lang_code"
+    KEY_LANG_IDX = "lang_idx"
+    KEY_BATCH_SIZE = "batch_size"
+    LEGACY_KEY_BATCH_SIZE = "gemini_batch_size"
+    KEY_YC_API_KEY = "yc_api_key"
+    KEY_YC_FOLDER_ID = "yc_folder_id"
+
     _MIGRATE_KEYS = {
-        # engine selection
-        "engine_id",
-        "engine_idx",
-        # model/lang
-        "model_id",
-        "model_idx",
-        "lang_code",
-        "lang_idx",
-        # service keys
-        "batch_size",
-        "yc_api_key",
-        "yc_folder_id",
-        # legacy payload
+        KEY_ENGINE_ID,
+        KEY_ENGINE_IDX,
+        KEY_MODEL_ID,
+        KEY_MODEL_IDX,
+        KEY_LANG_CODE,
+        KEY_LANG_IDX,
+        KEY_BATCH_SIZE,
+        KEY_YC_API_KEY,
+        KEY_YC_FOLDER_ID,
         KEY_CUSTOM_ENGINES,
     }
 
@@ -87,7 +94,6 @@ class AiSettingsIniMixin:
             except Exception:
                 return data
 
-        # fallback + миграция со старого формата (INI)
         raw = ""
         try:
             raw = str(self._get_ini(self.KEY_CUSTOM_ENGINES, "", typ=str) or "")
@@ -100,7 +106,6 @@ class AiSettingsIniMixin:
                 cleaned = normalize_custom_engines(parsed)
                 write_custom_engines_file(p, cleaned)
 
-                # очистим legacy, но уже в новой группе
                 try:
                     with group(self.INI_GROUP):
                         set_value(self.KEY_CUSTOM_ENGINES, "")
@@ -125,118 +130,164 @@ class AiSettingsIniMixin:
 
     def _restore_ini_settings(self) -> None:
         """Восстановить INI только для блока "Настройки"."""
-        # читаем из новой группы (AiSettings), с fallback на legacy AiRightPanel
-        def _read(key: str, default, typ):
-            v = self._get_ini(key, default, typ=typ)
-            return v
+        model_id = self._get_ini(self.KEY_MODEL_ID, "", typ=str)
+        model_idx = self._get_ini(self.KEY_MODEL_IDX, 0, typ=int)
+        lang_idx = self._get_ini(self.KEY_LANG_IDX, 0, typ=int)
+        batch_size = self._read_batch_size(default=8)
+        yc_api_key = self._get_ini(self.KEY_YC_API_KEY, "", typ=str)
+        yc_folder_id = self._get_ini(self.KEY_YC_FOLDER_ID, "", typ=str)
+        lang_code = self._normalize_lang_code(self._get_ini(self.KEY_LANG_CODE, "", typ=str))
 
-        # legacy idx fallbacks
-        model_id = _read("model_id", "", str)
-        m = _read("model_idx", 0, int)
-        l = _read("lang_idx", 0, int)
-        bs = _read("gemini_batch_size", 8, int)
-        yk = _read("yc_api_key", "", str)
-        yf = _read("yc_folder_id", "", str)
-        lc = _read("lang_code", "", str)
+        self._restore_model_selection(model_id=model_id, model_idx=model_idx)
+        self._restore_language_selection(lang_code=lang_code, lang_idx=lang_idx)
+        self._restore_batch_and_yandex(batch_size=batch_size, yc_api_key=yc_api_key, yc_folder_id=yc_folder_id)
 
-        # model: prefer model_id (itemData), fallback model_idx
+    def _restore_model_selection(self, *, model_id, model_idx) -> None:
+        combo = getattr(self, "cmb_model", None)
+        if combo is None:
+            return
+
         mid = (str(model_id) if model_id is not None else "").strip()
-        if mid and getattr(self, "cmb_model", None) is not None:
+        if mid:
             try:
-                self._set_combo_by_data(self.cmb_model, mid)
+                self._set_combo_by_data(combo, mid)
             except Exception:
                 pass
-        else:
-            try:
-                if getattr(self, "cmb_model", None) is not None:
-                    self.cmb_model.setCurrentIndex(int(m) if isinstance(m, int) or str(m).isdigit() else 0)
-            except Exception:
-                pass
+            return
 
-        # lang
-        lang_code = (str(lc) if lc is not None else "").strip().lower()
-        if lang_code in ("korean",):
-            lang_code = "ko"
-        elif lang_code in ("japan", "jp", "jpn"):
-            lang_code = "ja"
-        elif lang_code == "auto":
-            lang_code = ""
+        self._set_combo_index_safe(combo, model_idx, default=0)
 
-        if getattr(self, "cmb_lang", None) is not None:
-            if lang_code:
-                ok = self._set_combo_by_data(self.cmb_lang, lang_code)
-                if not ok:
-                    self.cmb_lang.setCurrentIndex(0)
-            else:
-                # legacy index (миграция)
-                try:
-                    self.cmb_lang.setCurrentIndex(int(l) if isinstance(l, int) or str(l).isdigit() else 0)
-                except Exception:
-                    self.cmb_lang.setCurrentIndex(0)
-                # миграция в lang_code
-                try:
-                    migrated = str(self.cmb_lang.currentData() or "").strip()
-                    with group(self.INI_GROUP):
-                        set_value("lang_code", migrated)
-                except Exception:
-                    pass
+    def _restore_language_selection(self, *, lang_code: str, lang_idx) -> None:
+        combo = getattr(self, "cmb_lang", None)
+        if combo is None:
+            return
 
-        # batch + yc
+        if lang_code:
+            ok = self._set_combo_by_data(combo, lang_code)
+            if not ok:
+                combo.setCurrentIndex(0)
+            return
+
+        self._set_combo_index_safe(combo, lang_idx, default=0)
+
         try:
-            if getattr(self, "spn_batch", None) is not None:
-                self.spn_batch.setValue(int(bs) if isinstance(bs, int) or str(bs).isdigit() else 8)
+            migrated = str(combo.currentData() or "").strip()
+            with group(self.INI_GROUP):
+                set_value(self.KEY_LANG_CODE, migrated)
         except Exception:
             pass
+
+    def _restore_batch_and_yandex(self, *, batch_size, yc_api_key, yc_folder_id) -> None:
+        try:
+            if getattr(self, "spn_batch", None) is not None:
+                self.spn_batch.setValue(self._coerce_int(batch_size, default=8))
+        except Exception:
+            pass
+
         try:
             if getattr(self, "ed_yc_api_key", None) is not None:
-                self.ed_yc_api_key.setText(str(yk or ""))
+                self.ed_yc_api_key.setText(str(yc_api_key or ""))
             if getattr(self, "ed_yc_folder_id", None) is not None:
-                self.ed_yc_folder_id.setText(str(yf or ""))
+                self.ed_yc_folder_id.setText(str(yc_folder_id or ""))
         except Exception:
             pass
 
     def _wire_persistence_settings(self) -> None:
         """Подключить сохранение INI только для блока "Настройки"."""
-        # model (по itemData)
         if getattr(self, "cmb_model", None) is not None:
             try:
                 self.cmb_model.currentIndexChanged.connect(
-                    lambda *_: self._save_ini("model_id", str(self.cmb_model.currentData() or ""))
+                    lambda *_: self._save_ini(self.KEY_MODEL_ID, str(self.cmb_model.currentData() or ""))
                 )
             except Exception:
                 pass
 
-        # lang (по itemData)
         if getattr(self, "cmb_lang", None) is not None:
             try:
                 self.cmb_lang.currentIndexChanged.connect(
-                    lambda *_: self._save_ini("lang_code", str(self.cmb_lang.currentData() or ""))
+                    lambda *_: self._save_ini(self.KEY_LANG_CODE, str(self.cmb_lang.currentData() or ""))
                 )
             except Exception:
                 pass
 
-        # batch
         if getattr(self, "spn_batch", None) is not None:
             try:
-                self.spn_batch.valueChanged.connect(lambda *_: self._save_ini("batch_size", int(self.spn_batch.value())))
+                self.spn_batch.valueChanged.connect(
+                    lambda *_: self._save_ini(self.KEY_BATCH_SIZE, int(self.spn_batch.value()))
+                )
             except Exception:
                 pass
 
-        # yc
         if getattr(self, "ed_yc_api_key", None) is not None:
             try:
-                self.ed_yc_api_key.textChanged.connect(lambda *_: self._save_ini("yc_api_key", str(self.ed_yc_api_key.text() or "")))
+                self.ed_yc_api_key.textChanged.connect(
+                    lambda *_: self._save_ini(self.KEY_YC_API_KEY, str(self.ed_yc_api_key.text() or ""))
+                )
             except Exception:
                 pass
         if getattr(self, "ed_yc_folder_id", None) is not None:
             try:
-                self.ed_yc_folder_id.textChanged.connect(lambda *_: self._save_ini("yc_folder_id", str(self.ed_yc_folder_id.text() or "")))
+                self.ed_yc_folder_id.textChanged.connect(
+                    lambda *_: self._save_ini(self.KEY_YC_FOLDER_ID, str(self.ed_yc_folder_id.text() or ""))
+                )
             except Exception:
                 pass
+
+    def _read_batch_size(self, default: int = 8) -> int:
+        batch_size = self._get_ini(self.KEY_BATCH_SIZE, default, typ=int)
+        if self._is_meaningful_value(batch_size, default):
+            return self._coerce_int(batch_size, default=default)
+
+        legacy = self._read_ini_from_group(self.INI_GROUP, self.LEGACY_KEY_BATCH_SIZE, default, typ=int)
+        if not self._is_meaningful_value(legacy, default):
+            legacy = self._read_ini_from_group(self.LEGACY_INI_GROUP, self.LEGACY_KEY_BATCH_SIZE, default, typ=int)
+
+        if self._is_meaningful_value(legacy, default):
+            normalized = self._coerce_int(legacy, default=default)
+            self._save_ini(self.KEY_BATCH_SIZE, normalized)
+            return normalized
+
+        return self._coerce_int(batch_size, default=default)
 
     # -------------------------
     # Shared helpers
     # -------------------------
+
+    @staticmethod
+    def _coerce_int(value, default: int) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return int(default)
+
+    @staticmethod
+    def _normalize_lang_code(value) -> str:
+        lang_code = (str(value) if value is not None else "").strip().lower()
+        if lang_code in ("korean",):
+            return "ko"
+        if lang_code in ("japan", "jp", "jpn"):
+            return "ja"
+        if lang_code == "auto":
+            return ""
+        return lang_code
+
+    @staticmethod
+    def _is_meaningful_value(value, default) -> bool:
+        try:
+            return value != default and str(value) != str(default)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _set_combo_index_safe(combo, index_value, *, default: int = 0) -> None:
+        try:
+            index = int(index_value)
+        except Exception:
+            index = int(default)
+
+        if index < 0 or index >= combo.count():
+            index = int(default)
+        combo.setCurrentIndex(index)
 
     def _save_ini(self, key: str, value) -> None:
         try:
@@ -252,34 +303,27 @@ class AiSettingsIniMixin:
         except Exception:
             return bool(default)
 
+    def _read_ini_from_group(self, group_name: str, key: str, default, typ):
+        try:
+            with group(group_name):
+                return get_value(key, default, typ=typ)
+        except Exception:
+            return default
+
     def _get_ini(self, key: str, default, typ):
         """Прочитать значение из INI (AiSettings) с fallback на legacy группу (AiRightPanel)."""
-        try:
-            with group(self.INI_GROUP):
-                v = get_value(key, default, typ=typ)
-        except Exception:
-            v = default
+        v = self._read_ini_from_group(self.INI_GROUP, key, default, typ)
 
-        # миграция: если в новой группе значение дефолтное, попробуем legacy
         if key in getattr(self, "_MIGRATE_KEYS", set()):
-            try:
-                is_default = (v == default) or (str(v) == str(default) and typ in (str, int, bool))
-            except Exception:
-                is_default = True
-
+            is_default = not self._is_meaningful_value(v, default)
             if is_default:
-                try:
-                    with group(self.LEGACY_INI_GROUP):
-                        legacy = get_value(key, default, typ=typ)
-                    # если в legacy есть не-дефолт — используем и пишем в новую группу
-                    if legacy != default:
-                        try:
-                            with group(self.INI_GROUP):
-                                set_value(key, legacy)
-                        except Exception:
-                            pass
-                        v = legacy
-                except Exception:
-                    pass
+                legacy = self._read_ini_from_group(self.LEGACY_INI_GROUP, key, default, typ)
+                if self._is_meaningful_value(legacy, default):
+                    try:
+                        with group(self.INI_GROUP):
+                            set_value(key, legacy)
+                    except Exception:
+                        pass
+                    v = legacy
 
         return v
