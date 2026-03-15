@@ -101,7 +101,7 @@ def build_ocr_runtime_config(right_panel) -> OcrRuntimeConfig:
             model = ""
 
     try:
-        bs = int(getattr(src, "spn_gemini_batch").value())
+        bs = int(getattr(src, "spn_batch").value())
         bs = max(1, bs)
     except Exception:
         bs = 4

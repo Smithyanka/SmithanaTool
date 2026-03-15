@@ -27,7 +27,12 @@ def load_qimage(path: str) -> QImage | None:
 
             psd = PSDImage.open(path)
             pil = psd.composite()
-            return _qimage_from_pil(pil)
+            qimg = _qimage_from_pil(pil)
+            if qimg is not None and not qimg.isNull():
+                force_dpi72(qimg)
+                if qimg.format() != QImage.Format_RGBA8888:
+                    qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
+            return qimg
         except Exception:
             return None
 

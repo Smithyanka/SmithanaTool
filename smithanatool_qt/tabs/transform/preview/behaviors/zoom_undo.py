@@ -433,7 +433,9 @@ class ZoomMixin:
         bpl = img.bytesPerLine()
 
         ptr = img.bits()
-        buf = np.frombuffer(ptr, dtype=np.uint8)
+        # Важно: для части источников (например PSD -> PIL -> QImage)
+        # буфер QImage может быть read-only. Берём writable copy.
+        buf = np.frombuffer(ptr, dtype=np.uint8).copy()
 
         buf = buf[: h_img * bpl].reshape(h_img, bpl)
         arr = buf[:, : w_img * 4].reshape(h_img, w_img, 4)

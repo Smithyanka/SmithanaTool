@@ -7,16 +7,18 @@ from PySide6.QtCore import QRect
 RECT_SORT_MANUAL = "manual"
 RECT_SORT_WEBTOON = "webtoon"
 RECT_SORT_MANGA = "manga"
-RECT_SORT_MANHUA_COMIC = "manhua_comic"
+RECT_SORT_MANHUA = "manhua"
 
-# Обратная совместимость со старыми именами/константами.
-RECT_SORT_MANHUA_HORIZONTAL = RECT_SORT_MANHUA_COMIC
-RECT_SORT_MANHUA_VERTICAL = RECT_SORT_MANHUA_COMIC
+RECT_SORT_COMIC = RECT_SORT_MANHUA
+RECT_SORT_MANHUA_COMIC = RECT_SORT_MANHUA
+
+RECT_SORT_MANHUA_HORIZONTAL = RECT_SORT_MANHUA
+RECT_SORT_MANHUA_VERTICAL = RECT_SORT_MANHUA
 RECT_SORT_MANGA_HORIZONTAL = RECT_SORT_MANGA
 RECT_SORT_MANGA_VERTICAL = RECT_SORT_MANGA
 
 RECT_SORT_LTR_TTB = RECT_SORT_WEBTOON
-RECT_SORT_LTR = RECT_SORT_MANHUA_COMIC
+RECT_SORT_LTR = RECT_SORT_MANHUA
 RECT_SORT_RTL = RECT_SORT_MANGA
 RECT_SORT_RTL_TTB = RECT_SORT_MANGA
 
@@ -24,24 +26,30 @@ RECT_SORT_MODES = (
     RECT_SORT_MANUAL,
     RECT_SORT_WEBTOON,
     RECT_SORT_MANGA,
-    RECT_SORT_MANHUA_COMIC,
+    RECT_SORT_MANHUA,
 )
 
 _OLD_MODE_ALIASES = {
     "manual": RECT_SORT_MANUAL,
     "webtoon": RECT_SORT_WEBTOON,
     "manga": RECT_SORT_MANGA,
-    "manhua_comic": RECT_SORT_MANHUA_COMIC,
+    "manhua": RECT_SORT_MANHUA,
 
-    # старые режимы
-    "ltr_ttb": RECT_SORT_WEBTOON,
-    "ltr": RECT_SORT_MANHUA_COMIC,
+    # старые / удалённые режимы -> теперь Маньхуа
+    "comic": RECT_SORT_MANHUA,
+    "manhua_comic": RECT_SORT_MANHUA,
+    "ltr": RECT_SORT_MANHUA,
+    "manhua_horizontal": RECT_SORT_MANHUA,
+    "manhua_vertical": RECT_SORT_MANHUA,
+
+    # старые режимы манги
     "rtl": RECT_SORT_MANGA,
     "rtl_ttb": RECT_SORT_MANGA,
-    "manhua_horizontal": RECT_SORT_MANHUA_COMIC,
-    "manhua_vertical": RECT_SORT_MANHUA_COMIC,
     "manga_horizontal": RECT_SORT_MANGA,
     "manga_vertical": RECT_SORT_MANGA,
+
+    # старый вебтун
+    "ltr_ttb": RECT_SORT_WEBTOON,
 }
 
 
@@ -66,7 +74,7 @@ def rect_sort_mode_title(mode: Optional[str]) -> str:
         return "Ручной"
     if mode == RECT_SORT_MANGA:
         return "Манга"
-    if mode == RECT_SORT_MANHUA_COMIC:
+    if mode == RECT_SORT_MANHUA:
         return "Маньхуа/Комикс"
     return "Вебтун"
 
@@ -106,8 +114,8 @@ def sort_rects_by_mode(
     if mode == RECT_SORT_MANGA:
         return _sort_by_rows(items, rtl=True)
 
-    if mode == RECT_SORT_MANHUA_COMIC:
-        return _sort_by_columns(items)
+    if mode == RECT_SORT_MANHUA:
+        return _sort_by_reading_blocks(items, rtl=False)
 
     return _sort_by_rows(items, rtl=False)
 
@@ -152,6 +160,137 @@ def _sort_by_columns(items: list[QRect]) -> list[QRect]:
     return out
 
 
+def _sort_by_reading_blocks(items: list[QRect], *, rtl: bool) -> list[QRect]:
+    ordered = _split_reading_blocks(items, rtl=rtl)
+    return [QRect(r) for r in ordered]
+
+
+def _split_reading_blocks(items: list[QRect], *, rtl: bool) -> list[QRect]:
+    if len(items) <= 1:
+        return [QRect(r) for r in items]
+
+    split = _best_axis_split(items, prefer_axis="y")
+    if split is None:
+        return _sort_by_rows(items, rtl=rtl)
+
+    axis, first, second = split
+    if axis == "y":
+        groups = (first, second)
+    else:
+        groups = (second, first) if rtl else (first, second)
+
+    out: list[QRect] = []
+    for group in groups:
+        out.extend(_split_reading_blocks(group, rtl=rtl))
+    return out
+
+
+def _best_axis_split(
+    items: list[QRect],
+    *,
+    prefer_axis: str = "y",
+) -> Optional[tuple[str, list[QRect], list[QRect]]]:
+    candidates = [
+        split
+        for split in (
+            _best_clean_split(items, axis="y"),
+            _best_clean_split(items, axis="x"),
+        )
+        if split is not None
+    ]
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda s: (s[3], 1 if s[0] == prefer_axis else 0),
+        reverse=True,
+    )
+    axis, first, second, best_score = candidates[0]
+
+    if best_score < 0.06:
+        return None
+    return axis, first, second
+
+
+def _best_clean_split(
+    items: list[QRect], *, axis: str
+) -> Optional[tuple[str, list[QRect], list[QRect], float]]:
+    if len(items) <= 1:
+        return None
+
+    if axis == "x":
+        items_sorted = sorted(items, key=lambda r: (_left(r), _top(r), _bottom(r)))
+        starts = [_left(r) for r in items_sorted]
+        ends = [_right(r) for r in items_sorted]
+        extent = max(1, max(ends) - min(starts))
+    else:
+        items_sorted = sorted(items, key=lambda r: (_top(r), _left(r), _right(r)))
+        starts = [_top(r) for r in items_sorted]
+        ends = [_bottom(r) for r in items_sorted]
+        extent = max(1, max(ends) - min(starts))
+
+    prefix_max_end: list[int] = []
+    cur = -10**9
+    for end in ends:
+        cur = max(cur, end)
+        prefix_max_end.append(cur)
+
+    best_idx: Optional[int] = None
+    best_gap = 0
+    for idx in range(len(items_sorted) - 1):
+        gap = starts[idx + 1] - prefix_max_end[idx]
+        if gap > best_gap:
+            best_gap = gap
+            best_idx = idx
+
+    if best_idx is None or best_gap <= 0:
+        return None
+
+    first = [QRect(r) for r in items_sorted[: best_idx + 1]]
+    second = [QRect(r) for r in items_sorted[best_idx + 1:]]
+
+    gap_score = best_gap / extent
+    cross_score = _cross_overlap_ratio(first, second, axis=axis)
+    balance_score = min(len(first), len(second)) / max(len(first), len(second))
+
+    # Для глобального разреза группы должны достаточно пересекаться
+    # по второй оси, иначе это часто ложный split.
+    min_cross = 0.10 if axis == "y" else 0.18
+    if cross_score < min_cross:
+        return None
+
+    score = gap_score * (0.55 + 0.45 * cross_score) * (0.80 + 0.20 * balance_score)
+    return axis, first, second, float(score)
+
+
+def _cross_overlap_ratio(
+    first: list[QRect],
+    second: list[QRect],
+    *,
+    axis: str,
+) -> float:
+    l1, t1, r1, b1 = _bbox_union(first)
+    l2, t2, r2, b2 = _bbox_union(second)
+
+    if axis == "x":
+        overlap = _overlap_1d(t1, b1, t2, b2)
+        base = max(1, min(b1 - t1, b2 - t2))
+    else:
+        overlap = _overlap_1d(l1, r1, l2, r2)
+        base = max(1, min(r1 - l1, r2 - l2))
+
+    return overlap / base
+
+
+def _bbox_union(items: list[QRect]) -> tuple[int, int, int, int]:
+    return (
+        min(_left(r) for r in items),
+        min(_top(r) for r in items),
+        max(_right(r) for r in items),
+        max(_bottom(r) for r in items),
+    )
+
+
 def _group_into_rows(items: list[QRect]) -> list[dict]:
     if not items:
         return []
@@ -186,7 +325,7 @@ def _group_into_rows(items: list[QRect]) -> list[dict]:
             overlap_ratio = overlap / max(1, min(r_h, row_avg_h))
             center_diff = abs(r_center - row_center)
 
-            if overlap_ratio >= 0.25 or center_diff <= tol:
+            if overlap_ratio >= 0.25 or (overlap > 0 and center_diff <= tol):
                 key = (center_diff, -overlap, abs(r_top - row_top))
                 if best_key is None or key < best_key:
                     best_key = key
@@ -254,7 +393,7 @@ def _group_into_columns(items: list[QRect]) -> list[dict]:
             overlap_ratio = overlap / max(1, min(r_w, col_avg_w))
             center_diff = abs(r_center - col_center)
 
-            if overlap_ratio >= 0.25 or center_diff <= tol:
+            if overlap_ratio >= 0.25 or (overlap > 0 and center_diff <= tol):
                 key = (center_diff, -overlap, abs(r_left - col_left))
                 if best_key is None or key < best_key:
                     best_key = key

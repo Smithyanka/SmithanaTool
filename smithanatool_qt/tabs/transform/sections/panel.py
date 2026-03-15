@@ -98,6 +98,23 @@ class SectionsPanel(QWidget):
 
         # ====== ВЬЮВЕР ======
         self._preview_section = PreviewSection(preview)
+
+        # Вернуть привязку уровней из секции "Вьювер" к реальному PreviewPanel.
+        if self._preview is not None:
+            try:
+                if hasattr(self._preview_section, "levelsChanged") and hasattr(self._preview, "set_levels_preview"):
+                    self._preview_section.levelsChanged.connect(self._preview.set_levels_preview)
+
+                if hasattr(self._preview_section, "resetLevelsRequested") and hasattr(self._preview, "reset_levels_preview"):
+                    self._preview_section.resetLevelsRequested.connect(self._preview.reset_levels_preview)
+
+                # Синхронизация стартового состояния UI -> preview
+                if hasattr(self._preview_section, "levels"):
+                    b, g, w = self._preview_section.levels.values()
+                    self._preview.set_levels_preview(b, g, w)
+            except Exception:
+                pass
+
         sec_prev = CollapsibleSection("Вьювер", self._preview_section, expanded=False)
         self._bind_section_expanded(sec_prev, "expanded_preview", default=False)
         sec_prev.setObjectName("section-preview")

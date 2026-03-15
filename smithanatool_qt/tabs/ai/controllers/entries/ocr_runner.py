@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QMessageBox
@@ -12,8 +12,26 @@ from smithanatool_qt.tabs.ai.workers.qt_runnable import OcrSignals, OcrTask
 
 class EntriesOcrRunnerMixin:
     # -------- extract --------
-    def _set_ocr_busy(self, busy: bool, text: str = "Распознавание..."):
-        self._ocr_running = bool(busy)
+    def _is_path_ocr_running(self, path: Optional[str] = None) -> bool:
+        path_key = path if path is not None else self._current_path()
+        return bool(getattr(self, "_ocr_running_by_path", {}).get(path_key or "", False))
+
+    def _set_path_ocr_running(self, path: str, busy: bool) -> None:
+        path_key = path or ""
+        running = getattr(self, "_ocr_running_by_path", None)
+        if running is None:
+            self._ocr_running_by_path = {}
+            running = self._ocr_running_by_path
+
+        if busy:
+            running[path_key] = True
+        else:
+            running.pop(path_key, None)
+
+        self._sync_current_ocr_ui()
+
+    def _sync_current_ocr_ui(self, text: str = "Распознавание...") -> None:
+        busy = self._is_path_ocr_running(self._current_path())
 
         try:
             self.right.btn_extract.setEnabled(not busy)
@@ -41,18 +59,18 @@ class EntriesOcrRunnerMixin:
         rects_fixed: List[QRect],
         work_fn: Callable[[], Tuple[List[str], str]],
     ) -> None:
-        self._set_ocr_busy(True, "Распознавание...")
+        self._set_path_ocr_running(path, True)
 
         signals = OcrSignals()
-        self._ocr_signals = signals
+        self._ocr_signals_by_path[path or ""] = signals
 
         def on_done(texts, first_error):
             from shiboken6 import isValid
 
             if not isValid(self.tab):
-                self._ocr_task = None
-                self._ocr_signals = None
-                self._set_ocr_busy(False)
+                self._ocr_tasks_by_path.pop(path or "", None)
+                self._ocr_signals_by_path.pop(path or "", None)
+                self._set_path_ocr_running(path, False)
                 return
 
             try:
@@ -61,45 +79,48 @@ class EntriesOcrRunnerMixin:
                 self._store.reorder_entries_by_rects(path, self._sorted_rects_for_mode(path, rects_fixed))
 
                 if first_error:
-                    QMessageBox.warning(self.tab, "Ошибка распознавания текста", first_error)
+                    title_path = path or "<без имени>"
+                    QMessageBox.warning(self.tab, "Ошибка распознавания текста", f"{title_path}\n\n{first_error}")
 
-                self._apply_rect_order(path)
-                self._rebind_rect_history_entries(path)
-                self._remember_rect_state(path)
-                self._update_preview_ocr_menu_state(path)
+                if path == self._current_path():
+                    self._apply_rect_order(path)
+                    self._rebind_rect_history_entries(path)
+                    self._remember_rect_state(path)
+                    self._update_preview_ocr_menu_state(path)
             finally:
-                self._ocr_task = None
-                self._ocr_signals = None
-                self._set_ocr_busy(False)
+                self._ocr_tasks_by_path.pop(path or "", None)
+                self._ocr_signals_by_path.pop(path or "", None)
+                self._set_path_ocr_running(path, False)
 
         def on_error(tb):
             from shiboken6 import isValid
 
             if not isValid(self.tab):
-                self._ocr_task = None
-                self._ocr_signals = None
-                self._set_ocr_busy(False)
+                self._ocr_tasks_by_path.pop(path or "", None)
+                self._ocr_signals_by_path.pop(path or "", None)
+                self._set_path_ocr_running(path, False)
                 return
 
             try:
-                QMessageBox.warning(self.tab, "Ошибка распознавания текста", tb)
+                title_path = path or "<без имени>"
+                QMessageBox.warning(self.tab, "Ошибка распознавания текста", f"{title_path}\n\n{tb}")
             finally:
-                self._ocr_task = None
-                self._ocr_signals = None
-                self._set_ocr_busy(False)
+                self._ocr_tasks_by_path.pop(path or "", None)
+                self._ocr_signals_by_path.pop(path or "", None)
+                self._set_path_ocr_running(path, False)
 
         signals.done.connect(on_done)
         signals.error.connect(on_error)
 
         task = OcrTask(work_fn, signals)
-        self._ocr_task = task
+        self._ocr_tasks_by_path[path or ""] = task
         self._pool.start(task)
 
     def ai_all(self):
-        if getattr(self, "_ocr_running", False):
+        path = self._current_path()
+        if self._is_path_ocr_running(path):
             return
 
-        path = self._current_path()
         self._store.ensure_path(path)
 
         rects = self.viewer.rects_img()

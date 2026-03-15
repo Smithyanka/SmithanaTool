@@ -46,10 +46,9 @@ class AiEntriesController(
         self._store = EntriesStore()
 
         self._pool = QThreadPool.globalInstance()
-        self._ocr_running = False
-
-        self._ocr_signals = None
-        self._ocr_task = None
+        self._ocr_running_by_path: Dict[str, bool] = {}
+        self._ocr_signals_by_path: Dict[str, object] = {}
+        self._ocr_tasks_by_path: Dict[str, object] = {}
 
         # Синхронизация выделений
         self._syncing_selection = False
@@ -107,6 +106,7 @@ class AiEntriesController(
         self._selected_rect_img = None
         self._clear_both_selection()
         self._reset_rect_action_history(current_path)
+        self._sync_current_ocr_ui()
 
     def on_rect_added(self, rect_img: QRect):
         current_path = self._current_path()
