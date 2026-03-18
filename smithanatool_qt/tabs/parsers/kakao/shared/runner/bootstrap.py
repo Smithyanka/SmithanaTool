@@ -58,7 +58,7 @@ def prepare_series_runtime(
         raise RuntimeError('Не удалось получить cookies из сохранённой сессии.')
 
     if attempted_login:
-        log('[OK] Авторизация выполнена через общий auth-файл.')
+        log('[OK] Авторизация выполнена.')
     else:
         log('[OK] Использована сохранённая сессия.')
 

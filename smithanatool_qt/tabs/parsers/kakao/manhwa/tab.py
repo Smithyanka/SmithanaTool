@@ -139,7 +139,7 @@ class ParserManhwaTab(ManhwaTabStateMixin, ManhwaTabRunMixin, BaseParserPage):
 
         grp_buy = QGroupBox('Покупки / тикеты')
         buy_layout = QVBoxLayout(grp_buy)
-        self.chk_auto_buy = QCheckBox('Автопокупка доступного тикета (без подтверждения)')
+        self.chk_auto_buy = QCheckBox('Автопокупка тикета')
         self.chk_auto_buy.setChecked(False)
         self.chk_auto_use_ticket = QCheckBox('Автоматически использовать доступный тикет')
         self.chk_auto_use_ticket.setChecked(False)
