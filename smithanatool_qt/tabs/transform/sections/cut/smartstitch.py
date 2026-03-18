@@ -205,8 +205,10 @@ def _process_folder_as_smartstitch(
 
 
 class SmartStitchSection(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, paths_provider=None):
         super().__init__(parent)
+
+        self._paths_provider = paths_provider
 
         self._input_dir_le = QLineEdit(self)
         self._input_dir_le.setVisible(False)
@@ -284,13 +286,20 @@ class SmartStitchSection(QWidget):
 
         row_buttons = QHBoxLayout()
         row_buttons.setContentsMargins(0, 0, 0, 0)
+        row_buttons.setSpacing(6)  # или 0, если хочешь почти вплотную
         row_buttons.addStretch(1)
-        self.btn_pick_src = QPushButton("Выбрать папку…")
+
+        self.btn_run = QPushButton("Нарезать")
+        self.btn_pick_src = QPushButton("Выбрать файлы…")
+
+        row_buttons.addWidget(self.btn_run)
         row_buttons.addWidget(self.btn_pick_src)
+
         root.addLayout(row_buttons)
 
         self.combo_detector.currentIndexChanged.connect(self._on_detector_changed)
-        self.btn_pick_src.clicked.connect(self._pick_input_dir)
+        self.btn_run.clicked.connect(self._run_batch_from_gallery)
+        self.btn_pick_src.clicked.connect(self._pick_input_files)
 
         QTimer.singleShot(0, self._apply_settings_from_ini)
 
@@ -318,23 +327,113 @@ class SmartStitchSection(QWidget):
         ini_save_str("SmartStitchSection", "detector", detector)
         self._refresh_parent_geometry()
 
-    def _pick_input_dir(self):
-        start_dir = self._input_dir_le.text().strip() or os.path.expanduser("~")
-        src = QFileDialog.getExistingDirectory(self, "Выберите папку с изображениями", start_dir)
-        if not src:
-            return
+    def _normalize_files(self, files: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
 
-        self._input_dir_le.setText(src)
-        ini_save_str("SmartStitchSection", "input_dir", src)
+        for p in files or []:
+            if not isinstance(p, str) or not p:
+                continue
+            try:
+                norm = os.path.abspath(p)
+            except Exception:
+                continue
+            if norm in seen:
+                continue
+            if not os.path.isfile(norm):
+                continue
+            if Path(norm).suffix.lower() not in _IMAGE_EXTS:
+                continue
+            seen.add(norm)
+            result.append(norm)
 
-        start_out = self._out_dir_le.text().strip() or src
+        return result
+
+    def _selected_paths(self) -> list[str]:
+        if callable(getattr(self, "_paths_provider", None)):
+            try:
+                return self._normalize_files(list(self._paths_provider() or []))
+            except Exception:
+                return []
+        return []
+
+    def _suggest_base_name(self, files: list[str]) -> str:
+        if not files:
+            return "slice"
+
+        try:
+            parents = [str(Path(p).resolve().parent) for p in files]
+            common_parent = os.path.commonpath(parents)
+            base = Path(common_parent).name.strip()
+            if base:
+                return base
+        except Exception:
+            pass
+
+        try:
+            base = Path(files[0]).parent.name.strip()
+            if base:
+                return base
+        except Exception:
+            pass
+
+        try:
+            base = Path(files[0]).stem.strip()
+            if base:
+                return base
+        except Exception:
+            pass
+
+        return "slice"
+
+    def _pick_output_dir(self, start_dir: str) -> str:
+        start_out = self._out_dir_le.text().strip() or start_dir or os.path.expanduser("~")
         out_dir = QFileDialog.getExistingDirectory(self, "Папка для сохранения PNG", start_out)
         if not out_dir:
-            return
+            return ""
 
         self._out_dir_le.setText(out_dir)
         ini_save_str("SmartStitchSection", "out_dir", out_dir)
-        self._run_batch()
+        return out_dir
+
+    def _pick_input_files(self):
+        start_dir = self._input_dir_le.text().strip() or os.path.expanduser("~")
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Выберите изображения",
+            start_dir,
+            "Изображения (*.png *.jpg *.jpeg *.bmp *.webp *.tif *.tiff *.tga)"
+        )
+        files = self._normalize_files(files)
+        if not files:
+            return
+
+        pick_dir = str(Path(files[0]).parent)
+        self._input_dir_le.setText(pick_dir)
+        ini_save_str("SmartStitchSection", "input_dir", pick_dir)
+
+        out_dir = self._pick_output_dir(pick_dir)
+        if not out_dir:
+            return
+
+        self._run_batch_files(files, out_dir, self._suggest_base_name(files))
+
+    def _run_batch_from_gallery(self):
+        files = self._selected_paths()
+        if not files:
+            QMessageBox.information(self, "Пакетная нарезка", "В галерее нет файлов для нарезки.")
+            return
+
+        try:
+            start_dir = str(Path(files[0]).parent)
+        except Exception:
+            start_dir = os.path.expanduser("~")
+
+        out_dir = self._pick_output_dir(start_dir)
+        if not out_dir:
+            return
+
+        self._run_batch_files(files, out_dir, self._suggest_base_name(files))
 
     def reset_to_defaults(self):
         reset_bindings(self, "SmartStitchSection")
@@ -360,25 +459,14 @@ class SmartStitchSection(QWidget):
         self.combo_detector.setCurrentIndex(1 if detector == "direct" else 0)
         self._on_detector_changed(self.combo_detector.currentIndex())
 
-    def _run_batch(self):
-        src_dir = self._input_dir_le.text().strip()
-        out_dir = self._out_dir_le.text().strip()
+    def _run_batch_files(self, files: list[str], out_dir: str, base_name: str | None = None):
+        files = self._normalize_files(files)
 
-        if not src_dir:
-            QMessageBox.information(self, "Пакетная нарезка", "Сначала выберите папку с изображениями.")
+        if not files:
+            QMessageBox.information(self, "Пакетная нарезка", "Нет поддерживаемых изображений для обработки.")
             return
         if not out_dir:
             QMessageBox.information(self, "Пакетная нарезка", "Сначала выберите папку для сохранения.")
-            return
-
-        try:
-            files = _iter_image_paths(src_dir)
-        except Exception as e:
-            QMessageBox.critical(self, "Пакетная нарезка", f"Не удалось прочитать папку:\n{e}")
-            return
-
-        if not files:
-            QMessageBox.information(self, "Пакетная нарезка", "В выбранной папке нет поддерживаемых изображений.")
             return
 
         detector = self._current_detector_key()
@@ -387,7 +475,7 @@ class SmartStitchSection(QWidget):
         scan_step = int(self.spin_scan_step.value())
         ignore_borders = int(self.spin_ignore.value())
 
-        base_name = Path(src_dir).name.strip() or "slice"
+        base_name = (base_name or self._suggest_base_name(files)).strip() or "slice"
 
         prog = QProgressDialog("Склеиваю и нарезаю главу…", None, 0, 0, self)
         prog.setWindowTitle("SmartStitch")
@@ -413,7 +501,7 @@ class SmartStitchSection(QWidget):
             QMessageBox.warning(
                 self,
                 "Пакетная нарезка",
-                f"Не удалось обработать папку:\n{e}",
+                f"Не удалось обработать файлы:\n{e}",
             )
             return
 

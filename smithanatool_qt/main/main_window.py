@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from importlib import metadata as importlib_metadata
 
-from PySide6.QtCore import Qt, QSize, QRect, QTimer
+from PySide6.QtCore import Qt, QSize, QRect
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -13,10 +13,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QWidget,
-    QFrame,
-    QLabel,
-    QSizePolicy,
-    QWidgetAction,
 )
 
 from smithanatool_qt.settings_bind import restore_window_geometry, save_window_geometry, group, get_value, set_value
@@ -33,7 +29,6 @@ from .window_state import (
 
 
 class MainWindow(QMainWindow):
-    # key -> (instance_attr_name, module_path, class_name, title)
     TAB_SPECS = {
         "workshop": (
             "_transform_tab",
@@ -47,7 +42,12 @@ class MainWindow(QMainWindow):
             "ParsersTab",
             "Парсеры Kakao",
         ),
-        "info": ("_info_tab", "smithanatool_qt.tabs.info_tab", "InfoTab", "Инфо"),
+        "info": (
+            "_info_tab",
+            "smithanatool_qt.tabs.info_tab",
+            "InfoTab",
+            "Инфо",
+        ),
     }
 
     def __init__(self):
@@ -127,8 +127,6 @@ class MainWindow(QMainWindow):
             return act
 
         self._act_tab_workshop = add_tab_toggle("Мастерская", "workshop")
-        # self._act_tab_transform = add_tab_toggle("Преобразования", "transform")
-        # self._act_tab_ai = add_tab_toggle("Извлечение текста", "ai_text")
         self._act_tab_parsers = add_tab_toggle("Парсеры Kakao", "parsers")
         self._act_tab_info = add_tab_toggle("Инфо", "info")
 

@@ -1,9 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
-import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 
 BASE = Path(os.path.abspath("."))
@@ -20,18 +18,6 @@ hiddenimports = [
     "smithanatool_qt.tabs.workshop.tab",
     "smithanatool_qt.tabs.parsers.tab",
     "smithanatool_qt.tabs.info_tab",
-]
-
-# ----------------- Qt essentials (без WebEngine) -----------------
-QT_PLUGINS = [
-    ("PySide6/Qt/plugins/platforms", "PySide6/Qt/plugins/platforms"),
-    ("PySide6/Qt/plugins/styles", "PySide6/Qt/plugins/styles"),
-    ("PySide6/Qt/plugins/imageformats", "PySide6/Qt/plugins/imageformats"),
-    ("PySide6/Qt/plugins/iconengines", "PySide6/Qt/plugins/iconengines"),
-]
-QT_RES_DIRS = [
-    ("PySide6/Qt/resources", "PySide6/Qt/resources"),
-    ("PySide6/Qt/translations", "PySide6/Qt/translations"),
 ]
 
 

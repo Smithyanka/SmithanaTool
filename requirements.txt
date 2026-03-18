@@ -1,7 +1,5 @@
 PySide6-Essentials>=6.7
 Pillow>=10.0
 requests>=2.31
-playwright
+playwright>=1.56.0
 psd-tools>=1.9
-urllib3>=1.26
-opencv-python>=4.12

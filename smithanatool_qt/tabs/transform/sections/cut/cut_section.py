@@ -73,7 +73,7 @@ class CutSection(QWidget):
         self.stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
         self.page_regular = CutRegularSection(preview=preview, parent=self, paths_provider=paths_provider)
-        self.page_smart = SmartStitchSection(parent=self)
+        self.page_smart = SmartStitchSection(parent=self, paths_provider=paths_provider)
         self.page_regular.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         self.page_smart.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
