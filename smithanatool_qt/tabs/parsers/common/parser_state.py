@@ -3,10 +3,10 @@ from __future__ import annotations
 import inspect
 from typing import Optional
 
-from PySide6.QtCore import Slot
+from PySide6.QtCore import QSettings, Slot
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
-from smithanatool_qt.settings_bind import group, save_attr_string
+from smithanatool_qt.settings_bind import ini_path, save_attr_string
 
 from .app_paths import choose_start_dir, get_settings_dir, open_in_explorer
 
@@ -14,6 +14,11 @@ from .app_paths import choose_start_dir, get_settings_dir, open_in_explorer
 class CommonParserStateMixin:
     def _ini_group_name(self) -> str:
         raise NotImplementedError
+
+    def _ini_key(self, key: str) -> str:
+        section = (self._ini_group_name() or '').strip().strip('/\\')
+        name = (key or '').strip().strip('/\\')
+        return f'{section}/{section}/{name}' if section else name
 
     def _settings_dir(self) -> str:
         try:
@@ -26,8 +31,7 @@ class CommonParserStateMixin:
         try:
             shadow_attr = f'__{key}__shadow'
             setattr(self, shadow_attr, value)
-            with group(self._ini_group_name()):
-                save_attr_string(self, shadow_attr, key)
+            save_attr_string(self, shadow_attr, self._ini_key(key))
         except Exception:
             pass
 
@@ -61,7 +65,6 @@ class CommonParserStateMixin:
         if not value:
             return
         self.ed_title.setText(value)
-        self._save_str_ini('title', value)
 
     def _apply_threads_state(self, checked: Optional[bool] = None) -> None:
         if checked is None:

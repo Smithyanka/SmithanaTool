@@ -203,14 +203,7 @@ class ParserNovelTab(NovelTabStateMixin, NovelTabRunMixin, BaseParserPage):
         self.rb_id.toggled.connect(self._persist_mode)
         self.btn_reset.clicked.connect(self._confirm_and_reset)
         self.chk_auto_threads.toggled.connect(self._apply_threads_state)
-        self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini('auto_threads', bool(v)))
-        self.spin_threads.valueChanged.connect(lambda v: self._save_int_ini('threads', int(v)))
-        self.chk_auto_buy.toggled.connect(lambda v: self._save_bool_ini('auto_buy', bool(v)))
-        self.chk_auto_use_ticket.toggled.connect(lambda v: self._save_bool_ini('auto_use_ticket', bool(v)))
         self._apply_threads_state(self.chk_auto_threads.isChecked())
-
-        self.ed_title.editingFinished.connect(lambda: self._save_str_ini('title', self.ed_title.text().strip()))
-        self.ed_spec.editingFinished.connect(lambda: self._save_str_ini('spec', self.ed_spec.text().strip()))
         self.ed_title.textChanged.connect(lambda *_: self._refresh_run_enabled())
         self.ed_spec.textChanged.connect(lambda *_: self._refresh_run_enabled())
 

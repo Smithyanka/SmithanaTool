@@ -9,6 +9,10 @@ from ..shared.tickets.run_mixin import TicketDecisionRunMixin
 
 
 class ManhwaTabRunMixin(TicketDecisionRunMixin, CommonParserRunMixin):
+    def _current_auto_mode_key(self) -> str:
+        idx = int(self.combo_auto_mode.currentIndex())
+        return 'count' if idx == 0 else 'height' if idx == 1 else 'smart'
+
     def _collect_cfg(self) -> ManhwaParserConfig:
         mode = 'number' if self.rb_number.isChecked() else ('id' if self.rb_id.isChecked() else ('index' if self.rb_index.isChecked() else 'ui'))
         return ManhwaParserConfig(
@@ -28,8 +32,13 @@ class ManhwaTabRunMixin(TicketDecisionRunMixin, CommonParserRunMixin):
             strip_metadata=self.chk_strip.isChecked(),
             per=int(self.spin_per.value()),
             zeros=int(self.spin_zeros.value()),
-            group_by=('count' if self.combo_auto_mode.currentIndex() == 0 else 'height'),
+            group_by=self._current_auto_mode_key(),
             group_max_height=int(self.spin_max_h.value()),
+            smart_height=int(self.spin_smart_height.value()),
+            smart_sensitivity=int(self.spin_smart_sensitivity.value()),
+            smart_scan_step=int(self.spin_smart_scan_step.value()),
+            smart_ignore_borders=int(self.spin_smart_ignore.value()),
+            smart_detector='smart',
             auto_confirm_purchase=self.chk_auto_buy.isChecked(),
             auto_confirm_use_rental=self.chk_auto_use_ticket.isChecked(),
             auto_threads=self.chk_auto_threads.isChecked(),

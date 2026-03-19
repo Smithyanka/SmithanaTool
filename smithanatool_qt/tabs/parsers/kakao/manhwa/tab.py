@@ -48,7 +48,7 @@ class ParserManhwaTab(ManhwaTabStateMixin, ManhwaTabRunMixin, BaseParserPage):
         gl = QGridLayout(left)
         gl.setHorizontalSpacing(4)
         gl.setVerticalSpacing(9)
-        gl.setContentsMargins(15, 0, 4, 20)
+        gl.setContentsMargins(15, 0, 10, 20)
         gl.setColumnStretch(0, 0)
         gl.setColumnStretch(1, 1)
         gl.setColumnStretch(2, 0)
@@ -214,32 +214,17 @@ class ParserManhwaTab(ManhwaTabStateMixin, ManhwaTabRunMixin, BaseParserPage):
         self._apply_threads_state(self.chk_auto_threads.isChecked())
 
         for rb in (self.rb_number, self.rb_id, self.rb_index, self.rb_ui):
-            rb.toggled.connect(self._persist_mode)
-            rb.toggled.connect(self._refresh_run_enabled)
+            rb.toggled.connect(lambda checked: checked and self._persist_mode())
 
         self.ed_title.textChanged.connect(self._refresh_run_enabled)
         self.ed_spec.textChanged.connect(self._refresh_run_enabled)
 
-        self.ed_title.editingFinished.connect(lambda: self._save_str_ini('title', self.ed_title.text().strip()))
-        self.ed_spec.editingFinished.connect(lambda: self._save_str_ini('spec', self.ed_spec.text().strip()))
-        self.spin_minw.valueChanged.connect(lambda v: self._save_int_ini('min_width', int(v)))
-        self.spin_width.valueChanged.connect(lambda v: self._save_int_ini('target_width', int(v)))
-        self.spin_comp.valueChanged.connect(lambda v: self._save_int_ini('compress_level', int(v)))
-        self.spin_per.valueChanged.connect(lambda v: self._save_int_ini('per', int(v)))
-        self.spin_zeros.valueChanged.connect(lambda v: self._save_int_ini('zeros', int(v)))
-        self.spin_max_h.valueChanged.connect(lambda v: self._save_int_ini('group_max_height', int(v)))
-        self.spin_scroll_ms.valueChanged.connect(lambda v: self._save_int_ini('scroll_ms', int(v)))
-        self.chk_auto.toggled.connect(lambda v: self._save_bool_ini('auto_stitch', bool(v)))
-        self.chk_no_resize.toggled.connect(lambda v: self._save_bool_ini('no_resize_width', bool(v)))
-        self.chk_same_dir.toggled.connect(lambda v: self._save_bool_ini('same_dir', bool(v)))
-        self.chk_delete_sources.toggled.connect(lambda v: self._save_bool_ini('delete_sources', bool(v)))
-        self.chk_opt.toggled.connect(lambda v: self._save_bool_ini('optimize_png', bool(v)))
-        self.chk_strip.toggled.connect(lambda v: self._save_bool_ini('strip_metadata', bool(v)))
-        self.chk_auto_threads.toggled.connect(lambda v: self._save_bool_ini('auto_threads', bool(v)))
-        self.chk_auto_buy.toggled.connect(lambda v: self._save_bool_ini('auto_buy', bool(v)))
-        self.chk_auto_use_ticket.toggled.connect(lambda v: self._save_bool_ini('auto_use_ticket', bool(v)))
-        self.spin_threads.valueChanged.connect(lambda v: self._save_int_ini('threads', int(v)))
-        self.combo_auto_mode.currentIndexChanged.connect(lambda idx: self._save_str_ini('group_by', 'count' if int(idx) == 0 else 'height'))
+        self.combo_auto_mode.currentIndexChanged.connect(
+            lambda idx: self._save_str_ini(
+                'group_by',
+                'count' if int(idx) == 0 else ('height' if int(idx) == 1 else 'smart')
+            )
+        )
 
         self._out_dir = ''
         self._stitch_dir = ''

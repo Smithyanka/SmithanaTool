@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QHBoxLayout, QSplitter, QWidget, QSizePolicy
 
-from smithanatool_qt.settings_bind import bind_attr_string, group, save_attr_string
+from smithanatool_qt.settings_bind import bind_attr_string, ini_path, save_attr_string
 
 from .common.base_page import BaseParserPage
 from .common.modes import MODE_MANHWA, VALID_PARSER_MODES
@@ -15,7 +15,7 @@ from .parser_panel import ParsersStackPanel
 from .shared_log import SharedLogPanel
 
 
-LEFT_MIN_W = 500
+LEFT_MIN_W = 520
 RIGHT_MIN_W = 400
 
 EXTERNAL_LOG_SPLITTER_SIZES = (1, 0)
@@ -62,10 +62,31 @@ class ParsersTab(QWidget):
         self.stack_panel.set_mode(self._mode, emit=False)
         self._refresh_shared_log_context()
 
-    def _apply_settings_from_ini(self) -> None:
+    def _migrate_ini(self) -> None:
+        section = 'ParsersTab'
         try:
-            with group("ParsersTab"):
-                bind_attr_string(self, "_mode", "mode", MODE_MANHWA)
+            qs = QSettings(str(ini_path()), QSettings.IniFormat)
+            for full_key in list(qs.allKeys()):
+                parts = str(full_key).split('/')
+                if len(parts) < 3 or parts[0] != section or parts[1] != section:
+                    continue
+
+                idx = 1
+                while idx < len(parts) and parts[idx] == section:
+                    idx += 1
+
+                target_key = '/'.join([section] + parts[idx:])
+                if qs.value(target_key, None) is None:
+                    qs.setValue(target_key, qs.value(full_key))
+                qs.remove(full_key)
+            qs.sync()
+        except Exception:
+            pass
+
+    def _apply_settings_from_ini(self) -> None:
+        self._migrate_ini()
+        try:
+            bind_attr_string(self, '_mode', 'ParsersTab/mode', MODE_MANHWA)
         except Exception:
             pass
 
@@ -83,17 +104,16 @@ class ParsersTab(QWidget):
         return tab
 
     def _build_manhwa_tab(self) -> ParserManhwaTab:
-        return self._build_page(ParserManhwaTab, "_manhwa_tab")
+        return self._build_page(ParserManhwaTab, '_manhwa_tab')
 
     def _build_novel_tab(self) -> ParserNovelTab:
-        return self._build_page(ParserNovelTab, "_novel_tab")
+        return self._build_page(ParserNovelTab, '_novel_tab')
 
     def _on_mode_changed(self, mode: str) -> None:
         self._mode = mode
         try:
-            with group("ParsersTab"):
-                save_attr_string(self, "_mode", "mode")
-                self._refresh_shared_log_context()
+            save_attr_string(self, '_mode', 'ParsersTab/mode')
+            self._refresh_shared_log_context()
         except Exception:
             pass
 

@@ -12,9 +12,18 @@ def build_extract_text_prompt(n_images: int, lang_hint: str = "") -> str:
         return "Return ONLY an empty JSON array []"
 
     hint = (lang_hint or "").strip().lower()
+
+    hint_names = {
+        "en": "English",
+        "ru": "Russian",
+        "ko": "Korean",
+        "ja": "Japanese",
+        "zh": "Chinese",
+    }
+
     hint_line = ""
     if hint and hint != "auto":
-        hint_line = f"Language hint: {hint}.\n"
+        hint_line = f"Language hint: {hint_names.get(hint, hint)}.\n"
 
     return (
         f"{hint_line}"

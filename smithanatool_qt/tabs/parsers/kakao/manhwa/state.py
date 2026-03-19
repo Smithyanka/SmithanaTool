@@ -9,14 +9,13 @@ from smithanatool_qt.settings_bind import (
     bind_line_edit,
     bind_radiobuttons,
     bind_spinbox,
-    group,
     try_bind_checkbox,
     try_bind_line_edit,
 )
 from smithanatool_qt.tabs.common.defaults import DEFAULTS
+from smithanatool_qt.tabs.parsers.common.app_paths import choose_start_dir
 from smithanatool_qt.tabs.parsers.common.parser_defaults import default_thread_count
 from smithanatool_qt.tabs.parsers.common.parser_state import CommonParserStateMixin
-from smithanatool_qt.tabs.parsers.common.app_paths import choose_start_dir
 
 
 class ManhwaTabStateMixin(CommonParserStateMixin):
@@ -26,8 +25,7 @@ class ManhwaTabStateMixin(CommonParserStateMixin):
     def _bind_section_expanded(self, sec, key: str, default: bool = False) -> None:
         shadow = f'__{key}__shadow'
         setattr(self, shadow, '1' if default else '0')
-        with group(self._ini_group_name()):
-            bind_attr_string(self, shadow, key, '1' if default else '0')
+        bind_attr_string(self, shadow, self._ini_key(key), '1' if default else '0')
 
         value = str(getattr(self, shadow, '0')).lower() in ('1', 'true', 'yes', 'on')
         sec.toggle_button.blockSignals(True)
@@ -43,9 +41,8 @@ class ManhwaTabStateMixin(CommonParserStateMixin):
 
     def reset_to_defaults(self) -> None:
         threads = default_thread_count()
-        keep_title = self.ed_title.text().strip()
-        keep_spec = self.ed_spec.text().strip()
-        keep_mode_idx = 0 if self.rb_number.isChecked() else 1 if self.rb_id.isChecked() else 2 if self.rb_index.isChecked() else 3
+
+        mode_idx = self.combo_auto_mode.currentIndex()
 
         self.spin_minw.setValue(720)
         self.chk_auto.setChecked(True)
@@ -58,43 +55,35 @@ class ManhwaTabStateMixin(CommonParserStateMixin):
         self.chk_strip.setChecked(True)
         self.spin_per.setValue(12)
         self.spin_zeros.setValue(2)
-        self.combo_auto_mode.setCurrentIndex(0)
+
+        try:
+            self.combo_auto_mode.blockSignals(True)
+            self.combo_auto_mode.setCurrentIndex(mode_idx)
+        finally:
+            self.combo_auto_mode.blockSignals(False)
+
         self.spin_max_h.setValue(10000)
+        self.spin_smart_height.setValue(8000)
+        self.spin_smart_sensitivity.setValue(90)
+        self.spin_smart_scan_step.setValue(5)
+        self.spin_smart_ignore.setValue(5)
         self.chk_auto_threads.setChecked(True)
         self.spin_threads.setValue(threads)
         self.chk_auto_buy.setChecked(False)
         self.chk_auto_use_ticket.setChecked(False)
-        self.spin_scroll_ms.setValue(30000)
+        self.spin_scroll_ms.setValue(5000)
 
-        self._save_int_ini('mode', keep_mode_idx)
-        self._save_str_ini('title', keep_title)
-        self._save_str_ini('spec', keep_spec)
-        self._save_int_ini('min_width', 720)
-        self._save_bool_ini('auto_stitch', True)
-        self._save_bool_ini('no_resize_width', True)
-        self._save_int_ini('target_width', 800)
-        self._save_bool_ini('same_dir', True)
-        self._save_bool_ini('delete_sources', True)
-        self._save_bool_ini('optimize_png', True)
-        self._save_int_ini('compress_level', 6)
-        self._save_bool_ini('strip_metadata', True)
-        self._save_int_ini('per', 12)
-        self._save_int_ini('zeros', 2)
-        self._save_str_ini('group_by', 'count')
-        self._save_int_ini('group_max_height', 10000)
-        self._save_bool_ini('auto_threads', True)
-        self._save_int_ini('threads', threads)
-        self._save_bool_ini('auto_buy', False)
-        self._save_bool_ini('auto_use_ticket', False)
-        self._save_int_ini('scroll_ms', 30000)
+        mode_map = {0: 'count', 1: 'height', 2: 'smart'}
+        self._group_by_shadow = mode_map.get(mode_idx, 'count')
+        self._save_str_ini('group_by', self._group_by_shadow)
 
         self._update_mode()
+        self._apply_threads_state()
+        self._update_group_by_visibility()
         self._update_auto_enabled()
         self._refresh_run_enabled()
 
     def _persist_mode(self) -> None:
-        idx = 0 if self.rb_number.isChecked() else 1 if self.rb_id.isChecked() else 2 if self.rb_index.isChecked() else 3
-        self._save_int_ini('mode', idx)
         self._update_mode()
 
     @Slot()
@@ -122,11 +111,24 @@ class ManhwaTabStateMixin(CommonParserStateMixin):
         self.lbl_comp.setEnabled(enable_comp)
 
     def _update_group_by_visibility(self) -> None:
-        show_count = self.combo_auto_mode.currentIndex() == 0
+        idx = int(self.combo_auto_mode.currentIndex())
+        show_count = idx == 0
+        show_height = idx == 1
+        show_smart = idx == 2
+
         self.lbl_per.setVisible(show_count)
         self.spin_per.setVisible(show_count)
-        self.lbl_max_h.setVisible(not show_count)
-        self.spin_max_h.setVisible(not show_count)
+        self.lbl_max_h.setVisible(show_height)
+        self.spin_max_h.setVisible(show_height)
+
+        self.lbl_smart_height.setVisible(show_smart)
+        self.spin_smart_height.setVisible(show_smart)
+        self.lbl_smart_sensitivity.setVisible(show_smart)
+        self.spin_smart_sensitivity.setVisible(show_smart)
+        self.lbl_smart_scan_step.setVisible(show_smart)
+        self.spin_smart_scan_step.setVisible(show_smart)
+        self.lbl_smart_ignore.setVisible(show_smart)
+        self.spin_smart_ignore.setVisible(show_smart)
 
     def _update_auto_enabled(self) -> None:
         on = self.chk_auto.isChecked()
@@ -141,16 +143,24 @@ class ManhwaTabStateMixin(CommonParserStateMixin):
             self.chk_strip,
             self.spin_per,
             self.spin_zeros,
+            self.spin_max_h,
+            self.spin_smart_height,
+            self.spin_smart_sensitivity,
+            self.spin_smart_scan_step,
+            self.spin_smart_ignore,
             self.lbl_stitch_text,
             self.lbl_stitch_dir,
             self.grp_png,
             self.lbl_per,
             self.lbl_zeros,
+            self.lbl_max_h,
+            self.lbl_smart_height,
+            self.lbl_smart_sensitivity,
+            self.lbl_smart_scan_step,
+            self.lbl_smart_ignore,
             self.grp_dim,
             self.lbl_mode,
             self.combo_auto_mode,
-            self.lbl_max_h,
-            self.spin_max_h,
             self.grp_stitch_opts,
             self.grp_setup,
         ]
@@ -216,34 +226,49 @@ class ManhwaTabStateMixin(CommonParserStateMixin):
         self.lbl_stitch_dir.setStyleSheet(f'color:{color}')
 
     def _apply_settings_from_ini(self) -> None:
-        with group(self._ini_group_name()):
-            bind_attr_string(self, '_out_dir', 'out_dir', '')
-            bind_attr_string(self, '_stitch_dir', 'stitch_dir', '')
-            bind_line_edit(self.ed_title, 'title', '')
-            bind_line_edit(self.ed_spec, 'spec', '')
-            try_bind_line_edit(self, 'ed_vol', 'volumes', '')
-            try_bind_checkbox(self, 'chk_auto_buy', 'auto_buy', False)
-            try_bind_checkbox(self, 'chk_auto_use_ticket', 'auto_use_ticket', False)
-            bind_spinbox(self.spin_minw, 'min_width', 720)
-            bind_spinbox(self.spin_width, 'target_width', 800)
-            bind_spinbox(self.spin_comp, 'compress_level', 6)
-            bind_spinbox(self.spin_per, 'per', 12)
-            bind_spinbox(self.spin_scroll_ms, 'scroll_ms', 30000)
-            bind_radiobuttons([self.rb_number, self.rb_id, self.rb_index, self.rb_ui], 'mode', 0)
-            bind_checkbox(self.chk_auto, 'auto_stitch', True)
-            bind_checkbox(self.chk_no_resize, 'no_resize_width', True)
-            bind_checkbox(self.chk_same_dir, 'same_dir', True)
-            bind_checkbox(self.chk_delete_sources, 'delete_sources', True)
-            bind_checkbox(self.chk_opt, 'optimize_png', True)
-            bind_checkbox(self.chk_strip, 'strip_metadata', True)
-            bind_spinbox(self.spin_zeros, 'zeros', 2)
-            bind_spinbox(self.spin_max_h, 'group_max_height', 10000)
-            bind_attr_string(self, '_group_by_shadow', 'group_by', 'count')
-            bind_checkbox(self.chk_auto_threads, 'auto_threads', DEFAULTS['auto_threads'])
-            bind_spinbox(self.spin_threads, 'threads', DEFAULTS['threads'])
+        bind_attr_string(self, '_out_dir', self._ini_key('out_dir'), '')
+        bind_attr_string(self, '_stitch_dir', self._ini_key('stitch_dir'), '')
+        bind_line_edit(self.ed_title, self._ini_key('title'), '')
+        bind_line_edit(self.ed_spec, self._ini_key('spec'), '')
+        try_bind_line_edit(self, 'ed_vol', self._ini_key('volumes'), '')
+        try_bind_checkbox(self, 'chk_auto_buy', self._ini_key('auto_buy'), False)
+        try_bind_checkbox(self, 'chk_auto_use_ticket', self._ini_key('auto_use_ticket'), False)
+        bind_spinbox(self.spin_minw, self._ini_key('min_width'), 720)
+        bind_spinbox(self.spin_width, self._ini_key('target_width'), 800)
+        bind_spinbox(self.spin_comp, self._ini_key('compress_level'), 6)
+        bind_spinbox(self.spin_per, self._ini_key('per'), 12)
+        bind_spinbox(self.spin_scroll_ms, self._ini_key('scroll_ms'), 5000)
+        bind_radiobuttons([self.rb_number, self.rb_id, self.rb_index, self.rb_ui], self._ini_key('mode'), 0)
+        bind_checkbox(self.chk_auto, self._ini_key('auto_stitch'), True)
+        bind_checkbox(self.chk_no_resize, self._ini_key('no_resize_width'), True)
+        bind_checkbox(self.chk_same_dir, self._ini_key('same_dir'), True)
+        bind_checkbox(self.chk_delete_sources, self._ini_key('delete_sources'), True)
+        bind_checkbox(self.chk_opt, self._ini_key('optimize_png'), True)
+        bind_checkbox(self.chk_strip, self._ini_key('strip_metadata'), True)
+        bind_spinbox(self.spin_zeros, self._ini_key('zeros'), 2)
+        bind_spinbox(self.spin_max_h, self._ini_key('group_max_height'), 10000)
+        bind_spinbox(self.spin_smart_height, self._ini_key('smart_height'), 8000)
+        bind_spinbox(self.spin_smart_sensitivity, self._ini_key('smart_sensitivity'), 90)
+        bind_spinbox(self.spin_smart_scan_step, self._ini_key('smart_scan_step'), 5)
+        bind_spinbox(self.spin_smart_ignore, self._ini_key('smart_ignore_borders'), 5)
+        bind_attr_string(self, '_group_by_shadow', self._ini_key('group_by'), 'count')
+        bind_checkbox(self.chk_auto_threads, self._ini_key('auto_threads'), DEFAULTS['auto_threads'])
+        bind_spinbox(self.spin_threads, self._ini_key('threads'), DEFAULTS['threads'])
 
-        gb = getattr(self, '_group_by_shadow', 'count')
-        self.combo_auto_mode.setCurrentIndex(0 if gb == 'count' else 1)
+        group_by = str(getattr(self, '_group_by_shadow', 'count') or 'count').lower()
+        if group_by == 'height':
+            idx = 1
+        elif group_by == 'smart':
+            idx = 2
+        else:
+            idx = 0
+
+        self.combo_auto_mode.blockSignals(True)
+        try:
+            self.combo_auto_mode.setCurrentIndex(idx)
+        finally:
+            self.combo_auto_mode.blockSignals(False)
+
         self._refresh_out_dir_label()
         self._refresh_stitch_dir_label()
         self._apply_threads_state()

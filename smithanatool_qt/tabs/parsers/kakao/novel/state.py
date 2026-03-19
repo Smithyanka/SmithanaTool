@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from smithanatool_qt.settings_bind import bind_attr_string, bind_line_edit, bind_radiobuttons, group
+from smithanatool_qt.settings_bind import bind_attr_string, bind_line_edit, bind_radiobuttons, bind_spinbox
 from smithanatool_qt.tabs.parsers.common.parser_defaults import default_thread_count
 from smithanatool_qt.tabs.parsers.common.parser_state import CommonParserStateMixin
 
@@ -50,32 +50,26 @@ class NovelTabStateMixin(CommonParserStateMixin):
         self.btn_run.setEnabled((not running) and out_ok and title_ok and spec_ok)
 
     def _apply_settings_from_ini(self) -> None:
-        with group(self._ini_group_name()):
-            bind_attr_string(self, '_out_dir', 'out_dir', '')
-            bind_line_edit(self.ed_title, 'title', '')
-            bind_line_edit(self.ed_spec, 'spec', '')
-            bind_radiobuttons([self.rb_ui, self.rb_id], 'mode', 0)
-            try:
-                from smithanatool_qt.settings_bind import try_bind_checkbox
 
-                try_bind_checkbox(self, 'chk_auto_threads', 'auto_threads', True)
-                try_bind_checkbox(self, 'chk_auto_buy', 'auto_buy', False)
-                try_bind_checkbox(self, 'chk_auto_use_ticket', 'auto_use_ticket', False)
-            except Exception:
-                pass
-            bind_attr_string(self, '__threads__shadow', 'threads', str(self.spin_threads.value()))
-
-        self._refresh_out_dir_label()
+        bind_attr_string(self, '_out_dir', self._ini_key('out_dir'), '')
+        bind_line_edit(self.ed_title, self._ini_key('title'), '')
+        bind_line_edit(self.ed_spec, self._ini_key('spec'), '')
+        bind_radiobuttons([self.rb_ui, self.rb_id], self._ini_key('mode'), 0)
         try:
-            threads = int(str(getattr(self, '__threads__shadow', self.spin_threads.value()) or self.spin_threads.value()))
-            self.spin_threads.setValue(max(1, min(32, threads)))
+            from smithanatool_qt.settings_bind import try_bind_checkbox
+
+            try_bind_checkbox(self, 'chk_auto_threads', self._ini_key('auto_threads'), True)
+            try_bind_checkbox(self, 'chk_auto_buy', self._ini_key('auto_buy'), False)
+            try_bind_checkbox(self, 'chk_auto_use_ticket', self._ini_key('auto_use_ticket'), False)
         except Exception:
             pass
+        bind_spinbox(self.spin_threads, self._ini_key('threads'), default_thread_count())
+
+        self._refresh_out_dir_label()
         self._apply_threads_state(self.chk_auto_threads.isChecked())
         self._update_mode()
         self._refresh_run_enabled()
 
     def _persist_mode(self) -> None:
-        self._save_int_ini('mode', 1 if self.rb_id.isChecked() else 0)
         self._update_mode()
         self._refresh_run_enabled()

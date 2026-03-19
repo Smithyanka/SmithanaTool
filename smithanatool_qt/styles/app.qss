@@ -105,6 +105,8 @@ QAbstractSpinBox {
 }
 
 QAbstractSpinBox:disabled,
+QComboBox:disabled ,
+QGroupBox::title:disabled,
 QAbstractSpinBox:disabled QLineEdit {
     color: palette(disabled, text);
     background: palette(disabled, base);

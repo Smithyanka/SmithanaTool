@@ -5,8 +5,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from smithanatool_qt.widgets.collapsible import CollapsibleSection
-from smithanatool_qt.tabs.transform.sections.stitch_section import StitchSection
-from smithanatool_qt.tabs.transform.sections.cut.cut_section import CutSection
+from smithanatool_qt.tabs.transform.sections.stitch.stitch_section import StitchSection
+from smithanatool_qt.tabs.transform.sections.cut_section import CutSection
 from smithanatool_qt.tabs.transform.sections.preview_section import PreviewSection
 from smithanatool_qt.tabs.transform.sections.conversions.conversions_panel import ConversionsPanel
 from smithanatool_qt.tabs.transform.sections.rename_section import RenamePanel

@@ -373,28 +373,34 @@ class StitchSection(QWidget):
 
     # helpers
     def reset_to_defaults(self):
+        auto_mode_idx = self.combo_auto_mode.currentIndex()  # 0=count, 1=height
+        stitch_mode = "one" if self.rb_one.isChecked() else "multi"
+
         reset_bindings(self, "StitchSection")
 
-        # восстановить режим автосклейки (count/height) и видимость пары полей
-        gb = (self._group_by_le.text() or "count")
         try:
             self.combo_auto_mode.blockSignals(True)
-            self.combo_auto_mode.setCurrentIndex(0 if gb == "count" else 1)
+            self.combo_auto_mode.setCurrentIndex(auto_mode_idx)
         finally:
             self.combo_auto_mode.blockSignals(False)
+
+        by = "count" if auto_mode_idx == 0 else "height"
+        self._group_by_le.setText(by)
+        ini_save_str("StitchSection", "group_by", by)
         self._on_auto_mode_changed(self.combo_auto_mode.currentIndex())
 
-        mode = (self._stitch_mode_le.text() or "one")
         try:
             self.rb_one.blockSignals(True)
             self.rb_auto.blockSignals(True)
-            self.rb_one.setChecked(mode == "one")
-            self.rb_auto.setChecked(mode != "one")
+            self.rb_one.setChecked(stitch_mode == "one")
+            self.rb_auto.setChecked(stitch_mode != "one")
         finally:
             self.rb_one.blockSignals(False)
             self.rb_auto.blockSignals(False)
 
-        self._apply_stitch_mode(mode)
+        self._stitch_mode_le.setText(stitch_mode)
+        ini_save_str("StitchSection", "stitch_mode", stitch_mode)
+        self._apply_stitch_mode(stitch_mode)
 
         # привести зависимые состояния в актуальный вид
         self._apply_compress_state(self.chk_opt.isChecked())
