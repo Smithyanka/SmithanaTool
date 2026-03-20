@@ -263,12 +263,20 @@ class AiSettingsIniMixin:
     @staticmethod
     def _normalize_lang_code(value) -> str:
         lang_code = (str(value) if value is not None else "").strip().lower()
+
+        if lang_code in ("english", "eng"):
+            return "en"
+        if lang_code in ("russian", "rus"):
+            return "ru"
         if lang_code in ("korean",):
             return "ko"
         if lang_code in ("japan", "jp", "jpn"):
             return "ja"
+        if lang_code in ("chinese", "china", "cn", "zho", "chi", "zh-cn", "zh-tw", "zh-hans", "zh-hant"):
+            return "zh"
         if lang_code == "auto":
             return ""
+
         return lang_code
 
     @staticmethod

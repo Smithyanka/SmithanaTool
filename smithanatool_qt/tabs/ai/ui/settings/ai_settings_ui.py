@@ -173,8 +173,10 @@ def build_settings_group(host) -> QWidget:
     # отображение (text) и то, что реально уходит в код/ini (data)
     host.cmb_lang.addItem("Auto", "")
     host.cmb_lang.addItem("English", "en")
+    host.cmb_lang.addItem("Russian", "ru")
     host.cmb_lang.addItem("Korean", "ko")
     host.cmb_lang.addItem("Japanese", "ja")
+    host.cmb_lang.addItem("Chinese", "zh")
 
     host.cmb_lang.setSizeAdjustPolicy(QComboBox.AdjustToContents)
     host.cmb_lang.setMinimumContentsLength(1)

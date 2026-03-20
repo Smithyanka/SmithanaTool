@@ -56,6 +56,9 @@ class OcrRightPanel(QWidget, RightPanelIniMixin, RightPanelListMixin):
         # ── List UI ───────────────────────────────────────────────────────
         self.list.setItemDelegate(FragmentItemDelegate(self.list))
 
+        self.list.setUniformItemSizes(False)
+        self.list.setWordWrap(True)
+
         # контекстное меню
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._on_context_menu)

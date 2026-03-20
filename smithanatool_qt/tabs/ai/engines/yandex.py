@@ -32,12 +32,33 @@ def _rate_limit(min_interval: float = 1.05) -> None:
 def _map_lang(lang_code: str) -> Optional[str]:
     hint = (lang_code or "").strip().lower()
     lang_map = {
-        "korean": "ko",
-        "japan": "ja",
         "english": "en",
-        "jp": "ja",
+        "eng": "en",
         "en": "en",
+
+        "russian": "ru",
+        "rus": "ru",
         "ru": "ru",
+
+        "korean": "ko",
+        "ko": "ko",
+
+        "japan": "ja",
+        "jp": "ja",
+        "jpn": "ja",
+        "ja": "ja",
+
+        "chinese": "zh",
+        "china": "zh",
+        "cn": "zh",
+        "zho": "zh",
+        "chi": "zh",
+        "zh": "zh",
+        "zh-cn": "zh",
+        "zh-tw": "zh",
+        "zh-hans": "zh",
+        "zh-hant": "zh",
+
         "auto": None,
         "": None,
     }
@@ -246,7 +267,7 @@ def yandex_ocr_full(
     if iso:
         payload["languageCodes"] = [iso]
     else:
-        payload["languageCodes"] = ["ko", "ja", "en", "ru"]
+        payload["languageCodes"] = ["*"]
 
     req = Request(
         "https://ocr.api.cloud.yandex.net/ocr/v1/recognizeText",
@@ -329,7 +350,7 @@ def yandex_ocr_text(
     if iso:
         payload["languageCodes"] = [iso]
     else:
-        payload["languageCodes"] = ["ko", "ja", "en", "ru"]
+        payload["languageCodes"] = ["*"]
 
     req = Request(
         "https://ocr.api.cloud.yandex.net/ocr/v1/recognizeText",

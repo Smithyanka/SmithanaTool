@@ -34,7 +34,6 @@ class RightPanelListMixin:
                     | Qt.ItemIsSelectable
                     | Qt.ItemIsEnabled
                 )
-                it.setSizeHint(QSize(-1, 40))
                 self.list.addItem(it)
         finally:
             self._block_item_changed = False
