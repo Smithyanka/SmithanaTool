@@ -88,6 +88,7 @@ class ManhwaParserWorker(BaseInteractiveParserWorker):
             by_index: Optional[int] = None
             by_index_spec: Optional[str] = None
             runtime = None
+            episode_map_rows: Optional[list[dict]] = None
 
             if mode == 'number':
                 chapter_spec = spec
@@ -168,6 +169,7 @@ class ManhwaParserWorker(BaseInteractiveParserWorker):
                 by_index_spec=by_index_spec,
                 wait_continue=self._wait_continue,
                 runtime=runtime,
+                preloaded_rows=episode_map_rows,
             )
         except Exception as err:
             self._emit_exception(err)

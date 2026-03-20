@@ -98,6 +98,7 @@ def run_parser(
     on_after_auth: Optional[Callable[[str], None]] = None,
     wait_continue: Optional[Callable[[], bool]] = None,
     runtime: Optional[KakaoSeriesRuntime] = None,
+    preloaded_rows: Optional[Iterable[dict]] = None,
 ) -> None:
     log = on_log or (lambda s: None)
 
@@ -123,7 +124,11 @@ def run_parser(
     series_dir = str(runtime.series_dir)
     cache_dir = str(runtime.cache_dir)
 
-    if use_cache_map:
+    if preloaded_rows is not None:
+        all_rows = [dict(row) for row in preloaded_rows if isinstance(row, dict)]
+        epmap_path = Path(cache_dir) / 'episode_map.json'
+        epmap_created_now = False
+    elif use_cache_map:
         all_rows, epmap_path, epmap_created_now = load_episode_rows(
             runtime,
             on_log=log,
@@ -183,6 +188,8 @@ def run_parser(
         )
         if state_path_str:
             ctx_kwargs['storage_state'] = state_path_str
+
+        log(f"[DEBUG] Storage state path: {state_path_str or '(нет файла)'}")
         shared_ctx = browser.new_context(**ctx_kwargs)
 
         for i, pid in enumerate(targets, 1):

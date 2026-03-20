@@ -83,15 +83,6 @@ def _collect_dom_urls(series_id: int, product_id: str | int, *,
     label = f"{episode_no:04d}" if isinstance(episode_no, int) else f"id_{product_id}"
     urls_json_path = str(urls_dir / f"{label}_urls.json")
 
-    state_path = None
-    try:
-        state_path = get_session_path(auth_dir or out_dir)
-    except Exception:
-        state_path = None
-    state_path_str = str(state_path) if state_path and Path(state_path).exists() else None
-    if log:
-        log(f"[DEBUG] Storage state path: {state_path_str or '(нет файла)'}")
-
     url = _viewer_url(int(series_id), str(product_id))
 
     if ctx is not None:
@@ -105,6 +96,13 @@ def _collect_dom_urls(series_id: int, product_id: str | int, *,
             scroll_ms=scroll_ms,
         )
         return urls_json_path
+
+    state_path = None
+    try:
+        state_path = get_session_path(auth_dir or out_dir)
+    except Exception:
+        state_path = None
+    state_path_str = str(state_path) if state_path and Path(state_path).exists() else None
 
     # Старый путь: создаём Playwright/браузер/контекст на время одного эпизода
     with sync_playwright() as p:
