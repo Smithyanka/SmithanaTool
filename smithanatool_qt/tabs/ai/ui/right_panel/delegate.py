@@ -124,7 +124,7 @@ class FragmentItemDelegate(QStyledItemDelegate):
 
         # Текст с переносом
         if opt.state & QStyle.State_Selected:
-            painter.setPen(opt.palette.highlightedText().color())
+            painter.setPen(opt.palette.text().color())
         else:
             painter.setPen(opt.palette.text().color())
 
@@ -221,9 +221,12 @@ class FragmentItemDelegate(QStyledItemDelegate):
 
     def eventFilter(self, obj, event):
         # Пересчёт высоты всех строк при изменении ширины списка
-        if self._view is not None and obj is self._view.viewport():
-            if event.type() == QEvent.Resize:
-                self._emit_all_size_hints_changed()
+        try:
+            if self._view is not None and obj is self._view.viewport():
+                if event.type() == QEvent.Resize:
+                    self._emit_all_size_hints_changed()
+        except RuntimeError:
+            return False
 
         # Управление многострочным редактором
         if isinstance(obj, QTextEdit):
